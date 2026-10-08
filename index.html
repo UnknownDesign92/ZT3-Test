@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><meta name="theme-color" content="#091424"><title>ZT3 Control v14 – Fahrzeugdaten-Scanner</title>
+<style>
+:root{color-scheme:dark;--bg:#08111f;--card:#152338;--stroke:#2a405f;--muted:#b1c4e0;--blue:#428bff;--green:#4fe0ad;--red:#ff9a9a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#f5f9ff;font:16px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}main{max-width:620px;margin:auto;padding:30px 16px 60px}h1{margin:0;font-size:27px}h2{font-size:18px;margin:0 0 12px}p{margin:9px 0}article{background:var(--card);border:1px solid var(--stroke);border-radius:17px;padding:20px;margin:15px 0}.sub,.fine{color:var(--muted)}.fine{font-size:13px}button{border:0;border-radius:13px;padding:16px 14px;width:100%;font:inherit;font-weight:700;cursor:pointer;color:white;background:var(--blue);min-height:56px;margin:8px 0}button:disabled{opacity:.47;cursor:wait}.small{background:#273b58;font-size:15px;min-height:45px}#status{min-height:52px;font-weight:700}#firmware p{padding:7px 0;border-bottom:1px solid #2e4056}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:320px;overflow:auto;background:#090f1a;border-radius:10px;padding:13px}.ok{color:var(--green)}.warn{color:var(--red)}
+
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.row>*{min-width:0}.row button{margin:5px 0}.muted{color:var(--muted)}.green{background:#126e59}.neutral{background:#273b58}.orange{background:#996334}select{display:block;width:100%;min-height:51px;border:1px solid #466183;background:#09182c;border-radius:11px;padding:12px;color:white;font:inherit;margin:10px 0}#summary{margin:8px 0;line-height:1.7}.hint{font-size:13px;color:#b1c4e0}.separator{height:1px;background:#2a405f;margin:15px 0}.chip{display:inline-block;padding:4px 9px;border-radius:10px;background:#223951;color:#cfe0f6;font-size:13px;margin:6px 3px 0 0}#actionInfo{min-height:24px;color:#b4ebff} .warnbox{padding:12px;border:1px solid #785d32;border-radius:11px;background:#2b241b;color:#ffe3bb;font-size:13px} @media(max-width:410px){.row{grid-template-columns:1fr}}
+
+.fwgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}.fwcell{background:#0b192d;border:1px solid #344864;border-radius:12px;padding:10px 7px;text-align:center}.fwcell strong{display:block;font-size:16px;word-break:break-word}.fwcell span{display:block;font-size:12px;color:#adc3df}.fwstatus{border:1px solid #456782;background:#10243b;padding:12px;border-radius:12px;line-height:1.5;margin:12px 0}.fwstatus strong{color:#8dc9ff}.filepick{display:block;border:1px dashed #557397;padding:14px;border-radius:12px;background:#0b1a2f;cursor:pointer}.filepick input{display:block;margin-top:9px;max-width:100%;color:#dbeaff}#firmwareFileInfo{font-size:13px;line-height:1.6;overflow-wrap:anywhere}.sectionheading{font-size:14px;font-weight:700;color:#a9d9ff;margin-top:14px}.flag{color:#ffda9b}.success{color:#65edb6}.muted2{font-size:13px;color:#b8c8da}@media(max-width:410px){.fwgrid{grid-template-columns:1fr 1fr 1fr}.fwcell strong{font-size:14px}}
+
+.scanpanel{border:1px solid #365d7d;background:linear-gradient(140deg,#182a46,#111e31)}
+.scanmetrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.scanmetrics>div{padding:11px 7px;border:1px solid #35506b;border-radius:10px;background:#0b1a30;text-align:center}
+.scanmetrics strong{display:block;font-size:18px}.scanmetrics span{font-size:12px;color:#b7cee9}
+progress{width:100%;height:13px;accent-color:#4eabff;margin:12px 0 5px}
+.scanhelp{font-size:13px;line-height:1.6;color:#b7cee9}
+#scanResults{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:#081423;border-radius:12px;font-size:12px}
+#scanProgress{font-size:14px;color:#acd2fc;min-height:22px}
+</style></head><body><main>
+<header><h1>ZT3 Control <span class="chip">v14</span></h1><p class="sub">Segway ZT3 Pro D · Diagnose & Register-Export</p></header>
+<article><h2>Verbindung</h2><div id="status" aria-live="polite">Roller einschalten und originale Segway-App schließen.</div>
+<button id="start">ZT3 verbinden &amp; auslesen</button>
+<div class="row"><button id="disconnect" class="neutral" disabled>Verbindung trennen</button><button id="readAgain" class="neutral" disabled>Daten aktualisieren</button></div>
+<p class="hint">Keine Häkchen. Bei Neu-Kopplung die Power-Taste einmal kurz drücken, sobald die Meldung erscheint. Eine Neu-Kopplung kann die offizielle Segway-App beeinflussen.</p></article>
+<article><h2>Fahrzeugdaten</h2><div id="summary">Noch nicht verbunden.</div><div id="firmware">Noch keine Registerdaten.</div></article>
+
+
+<article id="registerScanPanel" class="scanpanel">
+<h2>Fahrzeugdaten vollständig untersuchen</h2>
+<p class="scanhelp">Unsere App liest Registerwerte über die bestehende Bluetooth-Verbindung aus. Es werden <strong>keine Einstellungen verändert</strong>. Ein Register-Scan ist kein vollständiger Firmware- oder Speicherabzug: Bereiche, für die der Roller keine Lesezugriffe anbietet, bleiben unsichtbar.</p>
+<div class="scanmetrics">
+  <div><strong id="scanFound">0</strong><span>Antworten</span></div>
+  <div><strong id="scanTried">0</strong><span>Abgefragt</span></div>
+  <div><strong id="scanErrors">0</strong><span>Ohne Antwort</span></div>
+</div>
+<progress id="scanBar" max="100" value="0"></progress>
+<div id="scanProgress" aria-live="polite">Erst ZT3 verbinden &amp; auslesen.</div>
+<button id="scanQuick" disabled>Register-Schnellscan starten</button>
+<button id="scanFull" class="neutral" disabled>Großen Datenscan starten (3 Module)</button>
+<div class="row"><button id="scanStop" class="orange" disabled>Scan stoppen</button><button id="scanExport" class="green" disabled>Alle Scan-Daten als JSON sichern</button></div>
+<button id="scanCopy" class="small" disabled>Scan-Bericht kopieren</button>
+<div id="scanResults">Noch keine Register gescannt.</div>
+<p class="scanhelp">Schnellscan: ausgewählte Bereiche von VCU, BMS und MCU. Großer Scan: je 256 Register der Module 0x16, 0x07 und 0x02 (768 Anfragen; kann mehrere Minuten dauern). Unbekannte Antworten werden als Hexwerte gespeichert und <strong>nicht als Einstellungen interpretiert</strong>. Bei Abbruch lassen sich Zwischenergebnisse exportieren. Im Bericht stehen unter anderem Seriennummer und mögliche Diagnosedaten; teile ihn nur gezielt.</p>
+</article>
+
+<article id="firmwareCheckPanel">
+<h2>Firmware &amp; 40-km/h-Check</h2>
+<p class="hint">Die App prüft die tatsächlichen Daten deines Rollers. Die funktionierende V11-Bluetooth-Kopplung bleibt unverändert.</p>
+<div class="fwgrid">
+  <div class="fwcell"><span>VCU</span><strong id="fwVCU">–</strong></div>
+  <div class="fwcell"><span>MCU</span><strong id="fwMCU">–</strong></div>
+  <div class="fwcell"><span>Region</span><strong id="fwRegion">–</strong></div>
+</div>
+<div class="fwstatus" id="fwAssessment" aria-live="polite"><strong>Noch keine Diagnose</strong><div>Mit „ZT3 verbinden &amp; auslesen“ werden die Firmware- und Regionsdaten automatisch geprüft.</div></div>
+<div class="sectionheading">Technischer Stand</div>
+<p class="muted2" id="fwRequirements">Bluetooth-Anmeldung: ausstehend · Firmwaredatei: nicht geprüft · 40-km/h-Freischaltung: nicht bestätigt.</p>
+<div class="separator"></div>
+<h2>Firmwaredatei lokal untersuchen</h2>
+<p class="hint">Optional: Wenn du später ein rechtmäßig bezogenes, nachweislich passendes Firmware-Abbild hast, kannst du es hier <strong>offline prüfen</strong>. Die Datei wird nicht hochgeladen und nicht an den Roller gesendet.</p>
+<label class="filepick">Firmwaredatei auf dem Gerät auswählen<input type="file" id="firmwareFile" accept=".bin,.enc,.zip,.dat,.hex,.fw,.app,application/octet-stream" /></label>
+<div id="firmwareFileInfo" class="fwstatus">Noch keine Datei ausgewählt. Ein Dateiname oder Hash beweist keine Eignung für den ZT3 Pro D.</div>
+<button id="firmwareReport" class="small">Firmware-Diagnose als JSON speichern</button>
+<p class="hint flag">Firmware-Flashen ist absichtlich nicht freigeschaltet: Ohne geprüfte Hardware-ID, Dateiformat, Signatur und Wiederherstellungsweg könnte ein Schreibvorgang das Steuergerät unbrauchbar machen. Diese Version behauptet nicht, 40 km/h bereits freizuschalten.</p>
+</article>
+<article><h2>Geschwindigkeits-Einstellung</h2>
+<p class="hint">Schreibt den City-/Fahrmodus-Grenzwert in Register 0x48. Firmware, Region und gesetzliche Vorgaben können die tatsächliche Geschwindigkeit weiterhin begrenzen.</p>
+<select id="speedTarget" aria-label="Zielgeschwindigkeit"><option value="20">20 km/h</option><option value="22">22 km/h</option><option value="25">25 km/h</option><option value="30">30 km/h</option><option value="35">35 km/h</option><option value="40">40 km/h</option></select>
+<div class="row"><button id="setSpeed" disabled>Wert schreiben</button><button id="resetSpeed" class="neutral" disabled>Originalwert zurück</button></div>
+<div class="hint" id="speedDetails">Verbinden und Daten lesen, um den aktuellen Registerwert zu sehen.</div></article>
+<article><h2>Region</h2>
+<p id="regionDetails" class="hint">Aktuelle Region wird nach Verbindung anhand der Seriennummer ermittelt.</p>
+<div class="warnbox">Achtung: Eine Regionsänderung schreibt die Seriennummer. Sie kann die originale App-Kopplung beeinträchtigen, Garantie- oder Zulassungsfragen auslösen und lässt sich möglicherweise nicht per Bluetooth rückgängig machen. Auch mit US-Region sind 40 km/h nicht garantiert.</div>
+<button id="backup" class="neutral" disabled>Originaldaten sichern (JSON)</button>
+<div class="row"><button id="toUS" class="orange" disabled>Auf US umstellen</button><button id="toDE" class="neutral" disabled>Originalregion wiederherstellen</button></div>
+<p class="hint">Vor einer Regionsänderung wird zusätzlich eine Bestätigung angezeigt. Originaldaten werden lokal gesichert; eine Wiederherstellung kann technisch scheitern.</p></article>
+<article><h2>Ergebnis &amp; Diagnose</h2><p id="actionInfo" aria-live="polite">Noch keine Änderung vorgenommen.</p>
+<div class="row"><button id="copy" class="neutral">Bericht kopieren</button><button id="download" class="neutral">JSON-Bericht speichern</button></div><pre id="log">Bereit.</pre>
+<p class="hint">Sitzungstoken und Kopplungsschlüssel werden nicht exportiert. Kopplungsdaten bleiben lokal im Browser.</p></article>
+</main><script>
+'use strict';
+const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const TX='6e400002-b5a3-f393-e0a9-e50e24dcca9e',RX='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const $=id=>document.getElementById(id),te=new TextEncoder(),hex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join(''),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const salt=Uint8Array.from([0x97,0xcf,0xb8,2,0x84,0x41,0x43,0xde,0x56,0,0x2b,0x3b,0x34,0x78,0x0a,0x5d]);
+const report={schema:'zt3-control-v14',createdAt:new Date().toISOString(),device:null,events:[],handshake:{L:false,M:false,O:false},pairFrames:0,pairMode:null,reads:[],errors:[],disconnects:0,bleRx:[],speedChanges:[],regionChanges:[],firmwareInspection:null,firmwareAssessment:null,registerScan:null};
+let device=null,server=null,writeChar=null,notifyChar=null,cryptoState=null,queue=[],running=false,busy=false,operationGeneration=0,lastFrames=[],intentionalDisconnect=false,currentSN=null,originalSN=null,currentSpeedHex=null,originalSpeedHex=null,firmwareVCU=null,scanRunning=false,scanStopRequested=false,receivedFrameSeq=0;
+function log(s){report.events.push({at:new Date().toISOString(),text:s});$('log').textContent=report.events.slice(-55).map(e=>e.at.slice(11,19)+' '+e.text).join('\n');$('log').scrollTop=$('log').scrollHeight}
+function status(s){$('status').textContent=s;log(s)}
+function fail(e){const raw=String(e?.message||e);const msg=raw==='2'?'Bluetooth-Auswahl von Bluefy abgebrochen oder nicht verfügbar. Bitte erneut auf Verbinden tippen.':raw;report.errors.push(msg);status('Fehler: '+msg)}
+function buttons(){
+ const connected=!!server?.connected,authorized=connected&&!!cryptoState?.O;
+ $('start').disabled=busy;$('start').textContent=authorized?'Verbunden – Daten aktualisieren':'ZT3 verbinden & auslesen';
+ $('disconnect').disabled=busy||!connected;$('readAgain').disabled=busy||!authorized;
+ $('setSpeed').disabled=busy||!authorized||!currentSpeedHex;
+ $('resetSpeed').disabled=busy||!authorized||!originalSpeedHex||currentSpeedHex===originalSpeedHex;
+ $('backup').disabled=busy||!authorized||!currentSN;
+ $('toUS').disabled=busy||!authorized||!currentSN||currentSN[3]!=='D'||!originalSN||firmwareVCU!=='1.5.8';
+ $('toDE').disabled=busy||!authorized||!currentSN||currentSN[3]!=='U'||!originalSN;
+ $('scanQuick').disabled=busy||!authorized; $('scanFull').disabled=busy||!authorized; $('scanStop').disabled=!scanRunning; $('scanExport').disabled=!report.registerScan; $('scanCopy').disabled=!report.registerScan;
+ $('disconnect').disabled=scanRunning?false:(busy||!connected);
+}
+function check(gen){if(gen!==operationGeneration||!server?.connected)throw Error('Bluetooth-Verbindung getrennt – Versuch beendet.')}
+const xor=(a,b)=>Uint8Array.from(a,(v,i)=>v^b[i]);
+async function aesBlock(key,block){const k=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},false,['encrypt']);const v=new Uint8Array(await crypto.subtle.encrypt({name:'AES-CBC',iv:new Uint8Array(16)},k,block));return v.slice(0,16)}
+async function sha1(v){return new Uint8Array(await crypto.subtle.digest('SHA-1',v))}
+class NinebotCrypto{
+ constructor(name){this.name=te.encode(name);this.token=new Uint8Array(16);this.random=new Uint8Array(16);this.challenge=new Uint8Array(14);this.key=new Uint8Array(16);this.counter=0;this.L=false;this.M=false;this.O=false;}
+ async derive(a,b){const v=new Uint8Array(32);v.set(a.slice(0,16));v.set(b.slice(0,16),16);this.key=(await sha1(v)).slice(0,16)}
+ async init(){await this.derive(this.name,salt)}
+ async f(data){const ks=await aesBlock(this.key,salt),o=new Uint8Array(data.length);for(let i=0;i<data.length;i++)o[i]=data[i]^ks[i%16];return o}
+ async ctr(data,c){const o=new Uint8Array(data.length),v=new Uint8Array(16);v[0]=1;v[1]=(c>>>24)&255;v[2]=(c>>>16)&255;v[3]=(c>>>8)&255;v[4]=c&255;v.set(this.token.slice(0,8),5);for(let i=0;i<data.length;i+=16){v[15]=((i/16)+1)&255;const ks=await aesBlock(this.key,v);for(let j=0;j<Math.min(16,data.length-i);j++)o[i+j]=data[i+j]^ks[j]}return o}
+ async tag(data,c){const len=data.length-3,b0=new Uint8Array(16);b0[0]=0x59;b0[1]=(c>>>24)&255;b0[2]=(c>>>16)&255;b0[3]=(c>>>8)&255;b0[4]=c&255;b0.set(this.token.slice(0,8),5);b0[15]=len&255;let x=await aesBlock(this.key,b0);const first=new Uint8Array(16);first.set(data.slice(0,3));x=await aesBlock(this.key,xor(first,x));for(let i=3;i<data.length;i+=16){const block=new Uint8Array(16);block.set(data.slice(i,i+16));x=await aesBlock(this.key,xor(block,x))}const s=new Uint8Array(16);s[0]=1;s.set(b0.slice(1,13),1);const enc=await aesBlock(this.key,s);return xor(enc.slice(0,4),x.slice(0,4))}
+ async encrypt(data){const len=data.length,out=new Uint8Array(len+6);out.set(data.slice(0,3));const body=data.slice(3);if(this.counter===0){const obf=await this.f(body);out.set(obf,3);let sum=0;for(const v of body)sum+=v<128?v:v-256;let inv=(~sum)&65535;out[len+2]=inv&255;out[len+3]=inv>>8;this.counter=1;}else{const c=++this.counter;out.set(await this.ctr(body,c),3);out.set(await this.tag(data,c),len);out[len+4]=(c>>>8)&255;out[len+5]=c&255;if(data.length>=23&&data[2]===16&&data[3]===0x3e&&data[5]===0x5c)this.random.set(data.slice(7,23))}return out}
+ async decrypt(data){if(data.length<9||data[0]!==0x5a||data[1]!==0xa5) return null;const ctr=((data[data.length-2]<<8)|data[data.length-1]);const eff=(this.counter&~65535)+ctr;const body=data.slice(3,data.length-6),plain=eff===0?await this.f(body):await this.ctr(body,eff);const out=new Uint8Array(plain.length+3);out.set(data.slice(0,3));out.set(plain,3);if(eff===0&&out.length>=37&&out[2]===30&&out[4]===0x3e&&out[5]===0x5b){this.token.set(out.slice(7,23));this.challenge.set(out.slice(23,37));await this.derive(this.name,this.token);this.L=true;}if(eff>0&&out.length>=7&&out[4]===0x3e&&out[5]===0x5c&&(out[6]===0||out[6]===1)){await this.derive(this.random,this.token);this.M=true;}if(eff>0&&out.length>=7&&out[4]===0x3e&&out[5]===0x5d&&out[6]===1){this.O=true;this.M=true;}this.counter=eff+1;return out}
+ async resume(random){this.random.set(random);await this.derive(this.random,this.token);this.M=true}
+ async frame(dst,cmd,arg,payload=[]){const b=Uint8Array.from([0x5a,0xa5,payload.length,0x3e,dst,cmd,arg,...payload]);return this.encrypt(b)}
+}
+
+
+function parse(p){if(!p||p.length<7||p[0]!==0x5a||p[1]!==0xa5||p.length!==p[2]+7)return null;return {src:p[3],dst:p[4],cmd:p[5],arg:p[6],payload:hex(p.slice(7,7+p[2]))}}
+async function send(bytes){if(!writeChar||!server?.connected)throw Error('Bluetooth unterbrochen');await writeChar.writeValueWithoutResponse(bytes)}
+async function pump(){if(running)return;running=true;try{while(queue.length){const raw=queue.shift();if(!cryptoState)continue;const plain=await cryptoState.decrypt(raw),frame=parse(plain);if(!frame){log('Empfangene Antwort nicht zuordenbar ('+raw.length+' Byte)');continue}frame.seq=++receivedFrameSeq;lastFrames.push(frame);if(lastFrames.length>40)lastFrames.shift();report.handshake={L:cryptoState.L,M:cryptoState.M,O:cryptoState.O};if(frame.cmd===0x5b)log('Stufe 1 bestätigt (Roller bereits gekoppelt: '+(frame.arg===1?'ja':'nein')+').');else if(frame.cmd===0x5c)log('Kopplungsantwort vom Roller: '+frame.arg);else if(frame.cmd===0x5d)log('Anmeldebestätigung vom Roller: '+frame.arg);else if(cryptoState.O)log('Registerantwort: Modul '+frame.src+', Register '+frame.arg)}}catch(e){fail(e)}finally{running=false;if(queue.length)void pump()}}
+function onNotify(e){const v=e.target.value;if(!v)return;const raw=new Uint8Array(v.buffer.slice(v.byteOffset,v.byteOffset+v.byteLength));report.bleRx.push({at:new Date().toISOString(),length:raw.length,counter:raw.length>=2?(raw[raw.length-2]<<8)|raw[raw.length-1]:null});if(report.bleRx.length>70)report.bleRx.shift();queue.push(raw);void pump()}
+async function poll(fn,ms,gen){const end=Date.now()+ms;while(Date.now()<end){check(gen);if(fn())return true;await wait(55)}return !!fn()}
+function keyId(){return 'zt3-v7-pair-'+(device?.id||device?.name)}
+function invalidKeyId(){return 'zt3-v11-stale-'+(device?.id||device?.name)}
+function savedRandom(){try{const v=localStorage.getItem(keyId());if(localStorage.getItem(invalidKeyId())==='1')return null;return /^[0-9a-f]{32}$/i.test(v||'')?Uint8Array.from(v.match(/../g),x=>parseInt(x,16)):null}catch(_){return null}}
+function invalidateResume(){try{localStorage.setItem(invalidKeyId(),'1')}catch(_){}}
+function saveRandom(r){try{localStorage.setItem(keyId(),hex(r));localStorage.removeItem(invalidKeyId());log('Neuer bestätigter Schlüssel lokal gespeichert.')}catch(_){log('Schlüssel konnte nicht lokal gespeichert werden.')}}
+function versionFromHex(h){if(!/^[0-9a-f]{4}$/i.test(h||''))return null;const a=parseInt(h.slice(0,2),16),b=parseInt(h.slice(2,4),16);return b+'.'+(a>>4)+'.'+(a&15)}
+function serialFromHex(h){if(!/^[0-9a-f]{28}$/i.test(h||''))return null;const bytes=h.match(/../g).map(v=>parseInt(v,16));if(bytes.some(v=>v<48||v>90))return null;const s=String.fromCharCode(...bytes);return /^1K1[A-Z0-9]{11}$/.test(s)?s:null}
+function originalKey(){return 'zt3-v12-original-'+(device?.id||device?.name)}
+function baseline(){try{const v=JSON.parse(localStorage.getItem(originalKey())||'null');return v&&/^1K1D[A-Z0-9]{10}$/.test(v.sn||'')&&/^[0-9a-f]{4}$/i.test(v.speedHex||'')?v:null}catch(_){return null}}
+function storeBaseline(){if(!currentSN||!currentSpeedHex||currentSN[3]!=='D')return;try{if(!baseline()){localStorage.setItem(originalKey(),JSON.stringify({sn:currentSN,speedHex:currentSpeedHex,savedAt:new Date().toISOString()}));log('Ausgangsdaten lokal gesichert (Originalregion und Geschwindigkeitswert).')}}catch(_){log('Ausgangsdaten konnten nicht lokal gesichert werden.')}}
+function updateVehicleData(){
+ const rr=report.reads,field=n=>rr.find(x=>x.name===n)?.response?.payload||null;
+ if(field('Seriennummer'))currentSN=serialFromHex(field('Seriennummer'));if(field('Geschwindigkeit'))currentSpeedHex=/^[a-f0-9]{4}$/i.test(field('Geschwindigkeit'))?field('Geschwindigkeit').toLowerCase():null;
+ if(field('VCU'))firmwareVCU=versionFromHex(field('VCU'));
+ storeBaseline();const base=baseline();originalSN=base?.sn||null;originalSpeedHex=base?.speedHex||null;
+ const speed=currentSpeedHex?parseInt(currentSpeedHex.slice(2,4),16):null;
+ $('summary').textContent=currentSN?'Seriennummer: '+currentSN+' · Region: '+(currentSN[3]==='D'?'Deutschland':currentSN[3]==='U'?'USA':currentSN[3]):'Seriennummer nicht gelesen.';
+ $('speedDetails').textContent=currentSpeedHex?'Register 0x48: '+currentSpeedHex+' (Eco '+parseInt(currentSpeedHex.slice(0,2),16)+' / City '+speed+' km/h) · Original: '+(originalSpeedHex||'nicht gesichert'):'Geschwindigkeitsregister nicht lesbar.';
+ $('regionDetails').textContent=currentSN?'Region: '+(currentSN[3]==='D'?'Deutschland (D)':currentSN[3]==='U'?'USA (U)':currentSN[3])+' · Original-SN lokal: '+(originalSN?'vorhanden':'nicht vorhanden')+' · VCU: '+(firmwareVCU||'unbekannt'):'Aktuelle Region nicht lesbar.';
+ renderFirmwareAssessment();buttons();
+}
+function exportFile(data,filename){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),5000)}
+function snapshot(){return {schema:'zt3-original-backup-v12',date:new Date().toISOString(),device:report.device,original:baseline(),current:{serial:currentSN,speedHex:currentSpeedHex,firmwareVCU},registers:report.reads,note:'Kein Kryptoschlüssel enthalten. Seriennummer-Schreiben kann die Verbindung dauerhaft beeinträchtigen. Rückstellung nicht garantiert.'}}
+function backup(){if(!cryptoState?.O||!currentSN)return;exportFile(snapshot(),'ZT3-Originaldaten-'+device.name+'.json');$('actionInfo').textContent='Sicherung angefordert – prüfe, ob die JSON-Datei gespeichert wurde.'}
+async function readOne(name,reg,len,gen){check(gen);const mark=receivedFrameSeq;await send(await cryptoState.frame(0x16,0x01,reg,[len,0]));await poll(()=>lastFrames.some(f=>f.seq>mark&&f.src===0x16&&f.arg===reg&&(f.cmd===4||f.cmd===1)),1800,gen);const f=lastFrames.find(f=>f.seq>mark&&f.src===0x16&&f.arg===reg&&(f.cmd===4||f.cmd===1));report.reads=report.reads.filter(x=>x.name!==name);report.reads.push({name,register:reg,response:f||null});updateVehicleData();return f}
+async function withLock(fn){if(busy)return;busy=true;buttons();try{await fn()}catch(e){fail(e);$('actionInfo').textContent='Aktion fehlgeschlagen oder Zustand unklar. Nicht mehrfach blind schreiben.'}finally{busy=false;buttons()}}
+async function changeSpeed(revert=false){await withLock(async()=>{
+ if(!server?.connected||!cryptoState?.O||!currentSpeedHex)throw Error('Roller ist nicht vollständig verbunden.');
+ const target=revert?originalSpeedHex:('14'+Number($('speedTarget').value).toString(16).padStart(2,'0'));
+ if(!target||!/^[a-f0-9]{4}$/i.test(target))throw Error('Kein gültiger Zielwert.');
+ if(target===currentSpeedHex){$('actionInfo').textContent='Dieser Wert ist bereits im Register gespeichert.';return}
+ const gen=operationGeneration,old=currentSpeedHex;
+ const entry={at:new Date().toISOString(),from:old,to:target,sent:false,verified:false};report.speedChanges.push(entry);
+ status('Geschwindigkeitswert wird einmalig geschrieben …');check(gen);
+ await send(await cryptoState.frame(0x16,0x02,0x48,Uint8Array.from(target.match(/../g),h=>parseInt(h,16))));entry.sent=true;
+ await wait(350);const f=await readOne('Geschwindigkeit',0x48,2,gen);
+ entry.readback=f?.payload||null;entry.verified=entry.readback?.toLowerCase()===target;
+ $('actionInfo').textContent=entry.verified?'Geschwindigkeitsregister auf '+target+' geändert und zurückgelesen. Das bestätigt NICHT die tatsächlich erreichbare Geschwindigkeit.':'Nicht übernommen: Der zurückgelesene Geschwindigkeitswert blieb unverändert. Keine automatische Wiederholung.';
+ status(entry.verified?'Registeränderung bestätigt. Tatsächliche Fahrgeschwindigkeit durch Firmware/Region begrenzt möglich.':'Nicht bestätigte Änderung. Keine automatische Wiederholung.');
+})}
+async function changeRegion(target){if(!cryptoState?.O||!server?.connected||!currentSN||!originalSN){$('actionInfo').textContent='Erst verbinden, Originaldaten lesen und sichern.';return}
+ const expected=target==='U'?'USA':'Deutschland',nextSN=target==='U'?currentSN.slice(0,3)+'U'+currentSN.slice(4):originalSN;
+ if((target==='U'&&(currentSN[3]!=='D'||firmwareVCU!=='1.5.8'))||(target==='D'&&currentSN[3]!=='U')||!/^1K1[A-Z0-9]{11}$/.test(nextSN)){ $('actionInfo').textContent='Regionswechsel nicht freigegeben: Seriennummer/Firmware/Originaldaten prüfen.';return}
+ // Nutzer muss nur die riskante Änderung bestätigen. Automatische Sicherung via Download wird ausgelöst.
+ if(!confirm('ACHTUNG: Die Seriennummer des Rollers wird dauerhaft auf '+nextSN+' geändert ('+expected+'). Segway-App, Registrierung und Rückstellung könnten danach nicht mehr funktionieren. Dies garantiert keine höhere Geschwindigkeit. Wirklich fortfahren?'))return;
+ backup();await withLock(async()=>{const gen=operationGeneration;const old=currentSN;const entry={at:new Date().toISOString(),from:old,to:nextSN,sent:false,verified:false};report.regionChanges.push(entry);
+ status('Regionsänderung: einmaliger Schreibbefehl …');check(gen);await send(await cryptoState.frame(0x16,0x02,0x10,te.encode(nextSN)));entry.sent=true;
+ await wait(450);const f=await readOne('Seriennummer',0x10,14,gen);entry.readback=serialFromHex(f?.payload);entry.verified=entry.readback===nextSN;
+ $('actionInfo').textContent=entry.verified?'Seriennummer wurde nach dem Schreiben bestätigt: '+nextSN+'. Neustart kann erforderlich sein. Eine höhere Geschwindigkeit ist NICHT bestätigt.':'Nicht übernommen: DE-Seriennummer blieb unverändert. Kein erneuter Schreibversuch ohne andere technische Grundlage.';
+ status(entry.verified?'Regionseintrag zurückgelesen; Auswirkungen noch nicht geprüft.':'Region nicht verifiziert – keine automatische Wiederholung.');
+ })}
+async function disconnect(){if(busy||!device?.gatt?.connected)return;intentionalDisconnect=true;try{device.gatt.disconnect();status('Verbindung sauber getrennt. Erneut über Verbinden starten.');$('actionInfo').textContent='Roller getrennt. Keine Einstellungen gesendet.'}finally{intentionalDisconnect=false;buttons()}}
+async function refresh(){if(busy||!server?.connected||!cryptoState?.O)return;await withLock(async()=>{await readInternal(operationGeneration)})}
+const queries=[['Seriennummer',0x16,0x10,14],['VCU',0x16,0x17,2],['MCU',0x16,0x18,2],['BMS',0x16,0x19,2],['Geschwindigkeit',0x16,0x48,2],['VCU-Status',0x16,0x01,2]];
+async function readInternal(gen){if(!cryptoState?.O)throw Error('Nicht authentifiziert.');report.reads=[];$('firmware').textContent='Firmwaredaten werden gelesen …';for(const [name,dst,reg,len] of queries){check(gen);const start=receivedFrameSeq;await send(await cryptoState.frame(dst,0x01,reg,[len,0]));await poll(()=>lastFrames.some(f=>f.seq>start&&f.src===dst&&f.arg===reg&&(f.cmd===4||f.cmd===1)),1500,gen);const response=lastFrames.find(f=>f.seq>start&&f.src===dst&&f.arg===reg&&(f.cmd===4||f.cmd===1));report.reads.push({name,register:reg,response:response||null})}
+ const root=$('firmware');root.innerHTML='';for(const r of report.reads){const el=document.createElement('p');const value=r.response?(r.name==='Seriennummer'?(serialFromHex(r.response.payload)||'Hex '+r.response.payload):(['VCU','MCU','BMS'].includes(r.name)?(versionFromHex(r.response.payload)||'Hex '+r.response.payload):'Hex '+r.response.payload)):'keine Antwort';el.textContent=r.name+': '+value;root.appendChild(el)}updateVehicleData();status(report.reads.some(r=>r.response)?'Verbunden! Authentifizierung erfolgreich, Rollerdaten ausgelesen.':'Authentifiziert, aber keine Registerdaten empfangen.');}
+async function connectGatt(){server=await device.gatt.connect();const svc=await server.getPrimaryService(SVC);writeChar=await svc.getCharacteristic(TX);notifyChar=await svc.getCharacteristic(RX);notifyChar.addEventListener('characteristicvaluechanged',onNotify);await notifyChar.startNotifications();cryptoState=new NinebotCrypto(device.name);await cryptoState.init();queue=[];lastFrames=[];}
+function onDisconnect(){scanStopRequested=true;report.disconnects++;operationGeneration++;server=null;writeChar=null;cryptoState=null;queue=[];currentSN=null;currentSpeedHex=null;firmwareVCU=null;if(!intentionalDisconnect)status('Roller hat die Bluetooth-Verbindung getrennt.');renderFirmwareAssessment();buttons();}
+async function freshGattAfterFailedResume(){log('Gespeicherter Schlüssel abgelehnt; frische Kopplung wird vorbereitet.');invalidateResume();intentionalDisconnect=true;try{if(device.gatt.connected)device.gatt.disconnect()}finally{intentionalDisconnect=false}await wait(550);status('Neuer Bluetooth-Verbindungsaufbau für die Kopplung …');await connectGatt();}
+async function authHandshake(saved,mode){const gen=operationGeneration;cryptoState=new NinebotCrypto(device.name);await cryptoState.init();queue=[];lastFrames=[];report.handshake={L:false,M:false,O:false};report.pairMode=mode;
+ status('Schritt 1/3: Sitzungstoken wird gelesen …');for(let i=0;i<4&&!cryptoState.L;i++){check(gen);await send(await cryptoState.frame(4,0x5b,0));await poll(()=>cryptoState.L,850,gen)}if(!cryptoState.L)throw Error('Stufe 1: keine gültige Tokenantwort.');let random;
+ if(saved){random=saved;await cryptoState.resume(random);log('Vorhandenen Kopplungsschlüssel geprüft.')}else{
+  random=crypto.getRandomValues(new Uint8Array(16));status('Schritt 2/3: KOPPLUNG – jetzt einmal kurz die POWER-TASTE am Roller drücken.');
+  // Das ist der Ablauf aus dem einmal erfolgreich getesteten V7: derselbe Zufallswert, höchstens 6 Pakete.
+  // Manche Firmwareversionen trennen nach Wiederholung. In diesem Fall sofort abbrechen.
+  for(let i=0;i<6&&!cryptoState.M;i++){check(gen);report.pairFrames++;log('Kopplungspaket '+report.pairFrames+' gesendet.');await send(await cryptoState.frame(4,0x5c,0,random));await poll(()=>cryptoState.M,900,gen)}
+  if(!cryptoState.M)throw Error('Stufe 2: Roller hat die Neu-Kopplung nicht bestätigt (max. sechs Pakete).');log('Stufe 2 bestätigt.');
+ }
+ status('Schritt 3/3: Anmeldung wird bestätigt …');for(let i=0;i<4&&!cryptoState.O;i++){check(gen);await send(await cryptoState.frame(4,0x5d,0,cryptoState.challenge));await poll(()=>cryptoState.O,950,gen)}if(!cryptoState.O)throw Error('Stufe 3: Anmeldung nicht bestätigt.');report.handshake={L:true,M:true,O:true};saveRandom(random);status('Erfolgreich gekoppelt. Firmware wird ausgelesen …');await readInternal(gen);
+}
+async function start(){if(busy)return;if(server?.connected&&cryptoState?.O){await refresh();return;}busy=true;buttons();report.pairFrames=0;report.reads=[];report.errors=[];report.bleRx=[];report.events=[];report.createdAt=new Date().toISOString();report.handshake={L:false,M:false,O:false};$('firmware').textContent='Noch keine Daten ausgelesen.';currentSN=null;currentSpeedHex=null;firmwareVCU=null;updateVehicleData();
+ try{
+  if(!navigator.bluetooth?.requestDevice)throw Error('Bitte in Bluefy öffnen – Web Bluetooth fehlt.');
+  // requestDevice ohne vorgeschaltetes await direkt aus dem einzigen Button-Klick.
+  status('ZT3 im Bluetooth-Fenster auswählen …');device=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SVC]});
+  if(!device.name||!/^1K1[A-Z0-9]{11}$/.test(device.name))throw Error('Bitte den ZT3 mit der Kennung 1K1… auswählen.');
+  if(!device.__zt3V11Listener){device.addEventListener('gattserverdisconnected',onDisconnect);device.__zt3V11Listener=true}
+  report.device={name:device.name,id:device.id};if(device.gatt.connected){intentionalDisconnect=true;device.gatt.disconnect();intentionalDisconnect=false;await wait(400)}
+  status('Bluetooth-Verbindung wird hergestellt …');await connectGatt();const saved=savedRandom();
+  if(saved){try{await authHandshake(saved,'resume')}catch(e){if(String(e.message||e).startsWith('Stufe 3:')&&server?.connected){log('Wiederanmeldung fehlgeschlagen – automatische Neu-Kopplung wird gestartet.');await freshGattAfterFailedResume();await authHandshake(null,'fresh-after-stale')}else throw e}}
+  else await authHandshake(null,'fresh-v7');
+ }catch(e){fail(e)}finally{busy=false;buttons()}
+}
+async function copy(){const t=JSON.stringify(report,null,2);try{await navigator.clipboard.writeText(t);status('Bericht in Zwischenablage kopiert.')}catch(_){const el=document.createElement('textarea');el.value=t;document.body.appendChild(el);el.select();document.execCommand('copy');el.remove();status('Bericht kopiert.')}}
+function download(){const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'});const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='zt3-diagnose-v14.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1500)}
+
+// Firmware-Inspektion ist rein lokal und vollständig von der Bluetooth-Schreiblogik getrennt.
+function firmwareReadValue(name){return report.reads.find(r=>r.name===name)?.response?.payload||null}
+function renderFirmwareAssessment(){
+ const vcu=versionFromHex(firmwareReadValue('VCU')),mcu=versionFromHex(firmwareReadValue('MCU'));
+ const sn=serialFromHex(firmwareReadValue('Seriennummer'));
+ const region=sn?.[3]==='D'?'DE':sn?.[3]==='U'?'US':(sn?.[3]||'–');
+ const speedHex=firmwareReadValue('Geschwindigkeit');
+ const speed=/^[0-9a-f]{4}$/i.test(speedHex||'')?parseInt(speedHex.slice(2),16):null;
+ $('fwVCU').textContent=vcu||'–';$('fwMCU').textContent=mcu||'–';$('fwRegion').textContent=region;
+ const authorized=!!server?.connected&&!!cryptoState?.O;
+ let headline,detail;
+ if(!authorized){headline='Roller nicht authentifiziert';detail='Bitte zunächst per Bluetooth verbinden. Es wird nichts am Roller geändert.';}
+ else if(!vcu||!sn){headline='Diagnose unvollständig';detail='VCU oder Seriennummer wurde nicht zuverlässig zurückgelesen. Bitte Verbindung und Firmwaredaten prüfen.';}
+ else if(region==='DE'){
+  headline='Deutsche Firmware-/Regionsbegrenzung weiterhin aktiv';
+  detail='VCU '+vcu+', MCU '+(mcu||'unbekannt')+', DE-Kennung'+(speed===null?'':', Register 0x48 zuletzt '+speed+' km/h')+'. Frühere US- und 40-km/h-Schreibversuche wurden beim Rücklesen nicht bestätigt. Ein gültiges, kompatibles Firmware-Abbild ist derzeit nicht vorhanden.';
+ }else{
+  headline='Firmwaredaten gelesen – Freischaltung nicht bestätigt';
+  detail='Region '+region+', VCU '+vcu+'. Auch eine veränderte Kennung allein beweist weder eine erfolgreiche Freischaltung noch eine erreichbare Höchstgeschwindigkeit.';
+ }
+ $('fwAssessment').replaceChildren();const title=document.createElement('strong');title.textContent=headline;const body=document.createElement('div');body.textContent=detail;$('fwAssessment').append(title,body);
+ $('fwRequirements').textContent='Bluetooth-Anmeldung: '+(authorized?'bestätigt':'ausstehend')+' · VCU: '+(vcu||'unbekannt')+' · Zielregion: '+region+' · Passendes Firmware-Abbild: nicht nachgewiesen · Freischaltung: nicht nachgewiesen.';
+ report.firmwareAssessment={at:new Date().toISOString(),authenticated:authorized,vcu,mcu,region,speedRegisterKmh:speed,flashReady:false,speed40Verified:false};
+}
+async function inspectFirmwareFile(){
+ const file=$('firmwareFile').files?.[0];if(!file)return;
+ const out=$('firmwareFileInfo');out.textContent='Datei wird lokal geprüft …';
+ report.firmwareInspection=null;
+ try{
+  if(file.size>64*1024*1024)throw Error('Datei über 64 MiB – für diesen lokalen Prüfmodus zu groß.');
+  const bytes=await file.arrayBuffer();
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  const sha256=hex(new Uint8Array(digest));
+  const start=hex(new Uint8Array(bytes.slice(0,32)));
+  const zip=new Uint8Array(bytes.slice(0,4));
+  const detected=zip[0]===0x50&&zip[1]===0x4b?'ZIP-Container (Inhalt nicht verifiziert)':'Binärdatei (Format nicht verifiziert)';
+  report.firmwareInspection={name:file.name,size:file.size,sha256,header32:start,type:detected,uploaded:false,flashed:false,compatible:false};
+  out.textContent='Datei: '+file.name+' · Größe: '+file.size.toLocaleString('de-DE')+' Byte · SHA-256: '+sha256+' · Typ: '+detected+'. Kompatibilität und Authentizität NICHT bestätigt; keine Übertragung an den Roller.';
+ }catch(e){out.textContent='Dateiprüfung fehlgeschlagen: '+String(e?.message||e);report.firmwareInspection={error:String(e?.message||e)};}
+}
+function exportFirmwareReport(){
+ const output={schema:'zt3-firmware-readiness-v13',createdAt:new Date().toISOString(),device:report.device,handshake:report.handshake,firmwareAssessment:report.firmwareAssessment,firmwareInspection:report.firmwareInspection,registers:report.reads,priorWrites:{speedChanges:report.speedChanges,regionChanges:report.regionChanges},disclaimer:'Lese- und Dateiprüfungsbericht. Es wurde keine Firmware übertragen oder Freischaltung durchgeführt. Geheimschlüssel und Sitzungstoken sind nicht enthalten.'};
+ exportFile(output,'ZT3-Firmware-Check-v13.json');
+}
+
+// V14: READ-ONLY REGISTER SCAN: command 0x01 only. Never export the crypto key or session token.
+// The command/read frame layout is taken from our field-tested V11/V12 readInternal flow.
+const scanModules=[{id:0x16,name:'VCU/Controller'},{id:0x07,name:'BMS'},{id:0x02,name:'MCU'}];
+const scanHex=v=>'0x'+Number(v).toString(16).padStart(2,'0').toUpperCase();
+function scanPlan(full){
+ const plan=[];
+ for(const module of scanModules){
+   let regs;
+   if(full){regs=Array.from({length:256},(_,i)=>i)}
+   else if(module.id===0x16){regs=[...Array.from({length:128},(_,i)=>i),...Array.from({length:32},(_,i)=>0x80+i)];}
+   else {regs=Array.from({length:64},(_,i)=>0x70+i)}
+   for(const reg of regs){const length=module.id===0x16&&reg===0x10?14:2;plan.push({module:module.id,moduleName:module.name,register:reg,length});}
+ }
+ return plan;
+}
+function renderRegisterScan(){
+ const scan=report.registerScan;
+ if(!scan){$('scanBar').max=100;$('scanBar').value=0;$('scanFound').textContent='0';$('scanTried').textContent='0';$('scanErrors').textContent='0';$('scanProgress').textContent='Noch kein Scan gestartet.';$('scanResults').textContent='Noch keine Register gescannt.';buttons();return;}
+ $('scanFound').textContent=scan.results.length;
+ $('scanTried').textContent=scan.attempted;
+ $('scanErrors').textContent=scan.noResponse;
+ $('scanBar').max=scan.total||1;
+ $('scanBar').value=scan.attempted;
+ const state=scan.completed?'Abgeschlossen':scan.cancelled?'Gestoppt':scan.error?'Unterbrochen':'Läuft';
+ $('scanProgress').textContent=state+' · '+scan.attempted+'/'+scan.total+' Register · '+scan.results.length+' Antworten · '+(scan.current||'');
+ $('scanResults').textContent=scan.results.length?scan.results.slice(-22).map(r=>scanHex(r.module)+':'+scanHex(r.register)+' = '+r.payload+' ('+r.bytes+' Byte)').join('\n'):'Noch keine gültige Antwort. Fehlende Antworten sind normal, falls Register nicht existieren.';
+ buttons();
+}
+function scanData(){
+ const scan=report.registerScan;
+ if(!scan)throw Error('Noch keine Scan-Daten vorhanden.');
+ return {schema:'zt3-register-scan-v14',createdAt:new Date().toISOString(),device:report.device,connection:{authenticated:!!report.handshake.O,pairMode:report.pairMode},firmware:report.firmwareAssessment,knownRegisters:report.reads,scan:{...scan,results:scan.results},notes:['Read-only scan: Gesendet wurden ausschließlich Register-Leseanforderungen (cmd 0x01).','Je nach Firmware können weitere Daten, Bereiche oder der gesamte Firmware-Speicher nicht über Registerzugriffe ausgelesen werden.','Nicht antwortende Register beweisen nicht, dass sie auf dem Roller nicht existieren.','Hexwerte nicht ohne weitere Evidenz als Geschwindigkeits-/Regionseinstellungen interpretieren.','Geheimschlüssel und Sitzungstoken werden nicht exportiert. Seriennummer kann enthalten sein.']};
+}
+function exportScan(){if(!report.registerScan)return;exportFile(scanData(),'ZT3-Registerscan-'+new Date().toISOString().slice(0,10)+'.json');$('scanProgress').textContent+=' · JSON-Download ausgelöst';}
+async function copyScan(){
+ if(!report.registerScan)return;
+ const content=JSON.stringify(scanData(),null,2);
+ try{await navigator.clipboard.writeText(content);$('scanProgress').textContent+=' · Scanbericht kopiert';}
+ catch(e){const temp=document.createElement('textarea');temp.value=content;document.body.appendChild(temp);temp.select();try{document.execCommand('copy');$('scanProgress').textContent+=' · Scanbericht kopiert';}catch(_){$('scanProgress').textContent+=' · Kopieren nicht erlaubt: JSON speichern verwenden';}finally{temp.remove();}}
+}
+async function runRegisterScan(full){
+ if(busy||scanRunning||!server?.connected||!cryptoState?.O)return;
+ scanRunning=true;scanStopRequested=false;busy=true;
+ const plan=scanPlan(full),gen=operationGeneration;
+ const scan={mode:full?'full':'quick',startedAt:new Date().toISOString(),finishedAt:null,completed:false,cancelled:false,error:null,total:plan.length,attempted:0,noResponse:0,invalidFrames:0,current:'',results:[]};
+ report.registerScan=scan;renderRegisterScan();
+ // A tiny timeout avoids long hangs at unsupported addresses, while still giving BLE time to reply.
+ try{
+   for(const q of plan){
+     if(scanStopRequested){scan.cancelled=true;break;}
+     check(gen);
+     scan.current=q.moduleName+' '+scanHex(q.module)+':'+scanHex(q.register);
+     // Do not use a stale frame from a previous read. Responses may arrive asynchronously.
+     const mark=receivedFrameSeq;
+     await send(await cryptoState.frame(q.module,0x01,q.register,[q.length,0]));
+     const match=f=>f.src===q.module&&f.dst===0x3e&&f.arg===q.register&&f.cmd===0x04;
+     // 420 ms is enough for normal ZT3 responses in prior reports (~60 ms); full scans may take minutes.
+     let reply=null;
+     const until=Date.now()+420;
+     while(Date.now()<until){
+       if(scanStopRequested)break;
+       check(gen);
+       reply=lastFrames.find(f=>f.seq>mark&&match(f))||null;
+       if(reply)break;
+       await wait(35);
+     }
+     if(!reply&&!scanStopRequested)reply=lastFrames.find(f=>f.seq>mark&&match(f))||null;
+     scan.attempted++;
+     if(reply){scan.results.push({module:q.module,moduleName:q.moduleName,register:q.register,requestedBytes:q.length,payload:reply.payload,bytes:reply.payload.length/2,frame:{src:reply.src,dst:reply.dst,cmd:reply.cmd,arg:reply.arg}})}
+     else scan.noResponse++;
+     if(scan.attempted%4===0||reply)renderRegisterScan();
+     if(scan.attempted%8===0)await wait(25);
+   }
+   if(!scanStopRequested&&scan.attempted===scan.total)scan.completed=true;
+   else if(scanStopRequested)scan.cancelled=true;
+ }catch(e){scan.error=String(e?.message||e);report.errors.push('Registerscan: '+scan.error);log('Registerscan unterbrochen: '+scan.error);}
+ finally{
+   scan.finishedAt=new Date().toISOString();scan.current='';scanRunning=false;busy=false;
+   renderRegisterScan();
+   status('Datenscan: '+scan.results.length+' Register beantwortet, '+scan.noResponse+' ohne Antwort. '+(scan.completed?'Vollständig durchlaufen.':scan.cancelled?'Manuell gestoppt.':'Unterbrochen.'));
+   // Do not lose the partial/full dump. On iOS a download can be blocked; the export button remains active.
+   buttons();
+ }
+}
+$('scanQuick').addEventListener('click',()=>void runRegisterScan(false));
+$('scanFull').addEventListener('click',()=>void runRegisterScan(true));
+$('scanStop').addEventListener('click',()=>{scanStopRequested=true;$('scanProgress').textContent='Scan wird gestoppt – bereits gefundene Werte bleiben erhalten …';});
+$('scanExport').addEventListener('click',exportScan);
+$('scanCopy').addEventListener('click',()=>void copyScan());
+
+$('firmwareFile').addEventListener('change',()=>void inspectFirmwareFile());
+$('firmwareReport').addEventListener('click',exportFirmwareReport);
+
+$('start').addEventListener('click',()=>void start());$('disconnect').addEventListener('click',()=>void disconnect());$('readAgain').addEventListener('click',()=>void refresh());$('backup').addEventListener('click',backup);$('setSpeed').addEventListener('click',()=>void changeSpeed());$('resetSpeed').addEventListener('click',()=>void changeSpeed(true));$('toUS').addEventListener('click',()=>void changeRegion('U'));$('toDE').addEventListener('click',()=>void changeRegion('D')); $('copy').addEventListener('click',()=>void copy());$('download').addEventListener('click',download);log('ZT3 Control v14 bereit. WebBluetooth='+Boolean(navigator.bluetooth));renderFirmwareAssessment();renderRegisterScan();buttons();
+</script></body></html>
