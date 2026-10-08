@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><meta name="theme-color" content="#08101e"><title>ZT3 Control · Crypto</title>
+<style>
+:root{color-scheme:dark;--bg:#070d18;--panel:#131f32;--edge:#26374f;--text:#eef5ff;--muted:#9daec6;--blue:#3385ff;--green:#66ddaf;--red:#ff8794}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.47 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:670px;margin:0 auto;padding:24px 16px 72px}h1{font-size:28px;margin:0 0 4px}h2{font-size:18px;margin:0 0 13px}.muted,small{color:var(--muted)}p{margin:10px 0}header{padding:12px 1px 20px}
+article{background:var(--panel);border:1px solid var(--edge);border-radius:18px;padding:20px 17px;margin:14px 0}button{font:inherit;font-weight:750;color:white;background:var(--blue);border:0;border-radius:13px;padding:16px 13px;min-height:54px;width:100%;margin:7px 0;cursor:pointer}button:disabled{opacity:.45}button.secondary{background:#26364e}button.safe{background:#14664f}button.warn{background:#954f24}.cols{display:grid;grid-template-columns:1fr 1fr;gap:10px}.cols button{font-size:15px}
+#status{font-weight:700;line-height:1.5;min-height:50px}#progress{font-weight:700;color:var(--green)}.info{background:#0c1627;border:1px solid #314561;border-radius:12px;padding:12px;margin:12px 0}.danger{color:var(--red)}.good{color:var(--green)}
+pre{background:#080f1b;color:#d4e4ff;border-radius:11px;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:360px;overflow:auto}.tiny{font-size:13px;color:var(--muted)}label{display:flex;gap:8px;align-items:flex-start;margin:10px 0}label input{margin-top:5px;transform:scale(1.2)}
+</style></head><body><main><header><h1>ZT3 Control</h1><p class="muted">NinebotCrypto · ZT3 Pro D · Firmware 1.5.8</p></header>
+<article><h2>Verbindung</h2><div id="status">Bereit. Roller einschalten und Segway-App schließen.</div><div id="progress"></div><button id="connect">1 · ZT3 auswählen und verbinden</button><button id="auth" class="secondary" disabled>2 · Authentifizieren & Firmware auslesen</button><button id="disconnect" class="secondary" disabled>Trennen</button>
+<div class="info"><strong>Wichtig für die erste Kopplung</strong><p>Während „Kopplung läuft“ angezeigt wird, <strong>einmal kurz</strong> auf die Power-Taste drücken – <strong>nicht gedrückt halten</strong>. Die App sendet einmalig einen Kopplungswert und wartet auf eine Bestätigung. Eine ausbleibende Antwort wird nicht durch weitere Pakete erzwungen. Der Roller muss eingeschaltet bleiben.</p></div>
+<label><input type="checkbox" id="consent"><span>Ich möchte genau einen begrenzten Kopplungsversuch durchführen. Er könnte eine vorhandene Fremd-App-Kopplung verändern.</span></label></article>
+<article><h2>Firmware und Fahrzeugdaten</h2><div id="firmware">Noch nicht authentifiziert. Es werden vorher keine Fahrzeugregister abgefragt.</div><button id="read" class="secondary" disabled>Firmware erneut lesen</button></article>
+<article><h2>Privatgelände · Geschwindigkeitsprofil</h2><p class="tiny">Die Geschwindigkeitsumschaltung ist gesperrt, bis ein passender Schreibbefehl für VCU 1.5.8 nachgewiesen und sicher getestet ist. Keine unbestätigten Steuerbefehle.</p><div class="cols"><button id="normal" class="safe" disabled>20 km/h</button><button id="private" class="warn" disabled>40 km/h · Privat</button></div><p id="speedMsg" class="tiny">Nicht verfügbar: Schreibbefehl für diese Firmware nicht validiert.</p></article>
+<article><h2>Diagnose</h2><div class="cols"><button id="copy" class="secondary">Bericht kopieren</button><button id="download" class="secondary">JSON speichern</button></div><pre id="log">Noch keine Protokollmeldungen.</pre><small>Schlüssel und Sitzungstoken werden nicht im exportierten Bericht veröffentlicht. Der Schlüssel wird nur lokal im Browser gespeichert, wenn Stufe 3 bestätigt wurde. Kein Cloud-Backend.</small></article>
+</main><script>
+
+'use strict';
+const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const TX='6e400002-b5a3-f393-e0a9-e50e24dcca9e',RX='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const $=id=>document.getElementById(id),te=new TextEncoder(),hex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join(''),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const salt=Uint8Array.from([0x97,0xcf,0xb8,2,0x84,0x41,0x43,0xde,0x56,0,0x2b,0x3b,0x34,0x78,0x0a,0x5d]);
+const report={schema:'zt3-auth-read-v7-safe',createdAt:new Date().toISOString(),device:null,events:[],handshake:{L:false,M:false,O:false},pairFrames:0,reads:[],speedCommands:[],errors:[],disconnects:0};
+let device=null,server=null,writeChar=null,cryptoState=null,queue=[],running=false,busy=false,validatedFirmware=false,operationGeneration=0,lastFrames=[],authAttemptDone=false;
+function log(s){report.events.push({at:new Date().toISOString(),text:s});$('log').textContent=report.events.slice(-35).map(e=>e.at.slice(11,19)+' '+e.text).join('\n');$('log').scrollTop=$('log').scrollHeight}
+function status(s){$('status').textContent=s;log(s)}
+function fail(e){const s=String(e?.message||e);report.errors.push(s);status('Fehler: '+s)}
+function eligible(){return false} // No validated stock-firmware speed-write command is known.
+function buttons(){const on=!!server?.connected;$('connect').disabled=busy;$('auth').disabled=busy||!on||authAttemptDone;$('disconnect').disabled=busy||!on;$('read').disabled=busy||!on||!cryptoState?.O;$('normal').disabled=!eligible();$('private').disabled=!eligible()}
+function check(gen){if(gen!==operationGeneration||!server?.connected)throw Error('Bluetooth getrennt – Vorgang angehalten.')}
+const xor=(a,b)=>Uint8Array.from(a,(v,i)=>v^b[i]);
+async function aesBlock(key,block){const k=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},false,['encrypt']);const v=new Uint8Array(await crypto.subtle.encrypt({name:'AES-CBC',iv:new Uint8Array(16)},k,block));return v.slice(0,16)}
+async function sha1(v){return new Uint8Array(await crypto.subtle.digest('SHA-1',v))}
+class NinebotCrypto{
+ constructor(name){this.name=te.encode(name);this.token=new Uint8Array(16);this.random=new Uint8Array(16);this.challenge=new Uint8Array(14);this.key=new Uint8Array(16);this.counter=0;this.L=false;this.M=false;this.O=false;}
+ async derive(a,b){const v=new Uint8Array(32);v.set(a.slice(0,16));v.set(b.slice(0,16),16);this.key=(await sha1(v)).slice(0,16)}
+ async init(){await this.derive(this.name,salt)}
+ async f(data){const ks=await aesBlock(this.key,salt),o=new Uint8Array(data.length);for(let i=0;i<data.length;i++)o[i]=data[i]^ks[i%16];return o}
+ async ctr(data,c){const o=new Uint8Array(data.length),v=new Uint8Array(16);v[0]=1;v[1]=(c>>>24)&255;v[2]=(c>>>16)&255;v[3]=(c>>>8)&255;v[4]=c&255;v.set(this.token.slice(0,8),5);for(let i=0;i<data.length;i+=16){v[15]=((i/16)+1)&255;const ks=await aesBlock(this.key,v);for(let j=0;j<Math.min(16,data.length-i);j++)o[i+j]=data[i+j]^ks[j]}return o}
+ async tag(data,c){const len=data.length-3,b0=new Uint8Array(16);b0[0]=0x59;b0[1]=(c>>>24)&255;b0[2]=(c>>>16)&255;b0[3]=(c>>>8)&255;b0[4]=c&255;b0.set(this.token.slice(0,8),5);b0[15]=len&255;let x=await aesBlock(this.key,b0);const first=new Uint8Array(16);first.set(data.slice(0,3));x=await aesBlock(this.key,xor(first,x));for(let i=3;i<data.length;i+=16){const block=new Uint8Array(16);block.set(data.slice(i,i+16));x=await aesBlock(this.key,xor(block,x))}const s=new Uint8Array(16);s[0]=1;s.set(b0.slice(1,13),1);const enc=await aesBlock(this.key,s);return xor(enc.slice(0,4),x.slice(0,4))}
+ async encrypt(data){const len=data.length,out=new Uint8Array(len+6);out.set(data.slice(0,3));const body=data.slice(3);if(this.counter===0){const obf=await this.f(body);out.set(obf,3);let sum=0;for(const v of body)sum+=v<128?v:v-256;let inv=(~sum)&65535;out[len+2]=inv&255;out[len+3]=inv>>8;this.counter=1;}else{const c=++this.counter;out.set(await this.ctr(body,c),3);out.set(await this.tag(data,c),len);out[len+4]=(c>>>8)&255;out[len+5]=c&255;if(data.length>=23&&data[2]===16&&data[3]===0x3e&&data[5]===0x5c)this.random.set(data.slice(7,23))}return out}
+ async decrypt(data){if(data.length<9||data[0]!==0x5a||data[1]!==0xa5) return null;const ctr=((data[data.length-2]<<8)|data[data.length-1]);const eff=(this.counter&~65535)+ctr;const body=data.slice(3,data.length-6),plain=eff===0?await this.f(body):await this.ctr(body,eff);const out=new Uint8Array(plain.length+3);out.set(data.slice(0,3));out.set(plain,3);if(eff===0&&out.length>=37&&out[2]===30&&out[4]===0x3e&&out[5]===0x5b){this.token.set(out.slice(7,23));this.challenge.set(out.slice(23,37));await this.derive(this.name,this.token);this.L=true;}if(eff>0&&out.length>=7&&out[4]===0x3e&&out[5]===0x5c&&(out[6]===0||out[6]===1)){await this.derive(this.random,this.token);this.M=true;}if(eff>0&&out.length>=7&&out[4]===0x3e&&out[5]===0x5d&&out[6]===1){this.O=true;this.M=true;}this.counter=eff+1;return out}
+ async resume(random){this.random.set(random);await this.derive(this.random,this.token);this.M=true}
+ async frame(dst,cmd,arg,payload=[]){const b=Uint8Array.from([0x5a,0xa5,payload.length,0x3e,dst,cmd,arg,...payload]);return this.encrypt(b)}
+}
+
+function parse(p){if(!p||p.length<7||p[0]!==0x5a||p[1]!==0xa5||p.length<p[2]+7)return null;return {src:p[3],dst:p[4],cmd:p[5],arg:p[6],payload:hex(p.slice(7,7+p[2]))}}
+async function send(bytes){if(!writeChar||!server?.connected)throw Error('Verbindung unterbrochen');await writeChar.writeValueWithoutResponse(bytes)}
+async function pump(){if(running)return;running=true;try{while(queue.length){const raw=queue.shift();if(!cryptoState)continue;const data=await cryptoState.decrypt(raw),frame=parse(data);if(!frame){log('Nicht entschlüsselbares Datenpaket ('+raw.length+' Bytes)');continue}lastFrames.push(frame);if(lastFrames.length>25)lastFrames.shift();report.handshake={L:cryptoState.L,M:cryptoState.M,O:cryptoState.O};if(frame.cmd===0x5b){log('Antwort auf Stufe 1 empfangen. Bereits gekoppelt: '+(frame.arg===1?'ja':'nein'))}else if(frame.cmd===0x5c){log('Kopplungsantwort: '+frame.arg+([0,1].includes(frame.arg)?' (als ACK erkannt)':' (nicht als ACK erkannt)'))}else if(frame.cmd===0x5d){log('Authentifizierungsantwort: '+frame.arg)}else{log('Datenantwort von Modul '+frame.src+', Register '+frame.arg)} }}catch(e){fail(e)}finally{running=false;if(queue.length)void pump()}}
+function onNotify(e){const v=e.target.value;queue.push(new Uint8Array(v.buffer.slice(v.byteOffset,v.byteOffset+v.byteLength)));void pump()}
+async function poll(fn,ms,gen){const until=Date.now()+ms;while(Date.now()<until){check(gen);if(fn())return true;await wait(55)}return !!fn()}
+function keyId(){return 'zt3-v7-pair-'+(device?.id||device?.name)}
+function savedRandom(){try{const v=localStorage.getItem(keyId());return /^[a-f0-9]{32}$/i.test(v||'')?Uint8Array.from(v.match(/../g),x=>parseInt(x,16)):null}catch(_){return null}}
+function saveRandom(r){try{localStorage.setItem(keyId(),hex(r));log('Bestätigter Kopplungswert lokal gespeichert (nicht exportiert).')}catch(_){log('Lokale Speicherung nicht verfügbar: sichere Wiederverbindung nicht garantiert.')}}
+function showReads(){const el=$('firmware');if(!report.reads.length){el.textContent='Keine bestätigte Firmwareantwort.';return}el.innerHTML='';for(const r of report.reads){const p=document.createElement('p');p.textContent=r.name+': '+(r.response?'Hex '+r.response.payload:'keine Antwort');el.appendChild(p)} }
+async function connect(){if(busy)return;busy=true;buttons();try{
+ if(!navigator.bluetooth||!navigator.bluetooth.requestDevice)throw Error('Bitte in Bluefy öffnen (Web Bluetooth fehlt).');
+ if(device?.gatt?.connected)device.gatt.disconnect();
+ status('Bluetooth-Geräteauswahl wird geöffnet …');device=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SVC]});
+ if(!device.name||!/^1K1D/.test(device.name))throw Error('Bitte nur den ZT3 mit Seriennummer 1K1D… auswählen.');
+ report.device={name:device.name,id:device.id};
+ device.addEventListener('gattserverdisconnected',()=>{operationGeneration++;validatedFirmware=false;report.disconnects++;status('Bluetooth-Verbindung getrennt. Roller bleibt unverändert.');buttons()});
+ server=await device.gatt.connect();const svc=await server.getPrimaryService(SVC);writeChar=await svc.getCharacteristic(TX);const notify=await svc.getCharacteristic(RX);notify.addEventListener('characteristicvaluechanged',onNotify);await notify.startNotifications();cryptoState=new NinebotCrypto(device.name);await cryptoState.init();status('Verbunden: '+device.name+'. Bereit zur Authentifizierung.');
+}catch(e){fail(e)}finally{busy=false;buttons()}}
+async function auth(){if(busy||!server?.connected)return;busy=true;const gen=operationGeneration;buttons();try{
+ const saved=savedRandom();if(!saved&&!$('consent').checked){throw Error('Bitte zuerst das Kästchen für den begrenzten Erstkopplungsversuch markieren.')}
+ authAttemptDone=true;cryptoState=new NinebotCrypto(device.name);await cryptoState.init();queue=[];lastFrames=[];validatedFirmware=false;report.reads=[];report.pairFrames=0;report.handshake={L:false,M:false,O:false};showReads();
+ status('Stufe 1: Sitzungstoken lesen …');for(let attempt=0;attempt<3&&!cryptoState.L;attempt++){check(gen);await send(await cryptoState.frame(4,0x5b,0));await poll(()=>cryptoState.L,950,gen)}
+ if(!cryptoState.L)throw Error('Keine Antwort auf Stufe 1 – abgebrochen.');
+ let random;
+ if(saved){random=saved;await cryptoState.resume(saved);log('Gespeicherter lokaler Schlüssel eingesetzt; neue Kopplung wird nicht gestartet.')}else{
+   random=crypto.getRandomValues(new Uint8Array(16));status('Stufe 2: Kopplung läuft. JETZT einmal kurz die Power-Taste drücken (nicht halten).');
+   // The Python reference explicitly warns that retransmitting Stage 2 can disconnect ZT3 firmware.
+   // A single Stage 2 frame; wait for either 0x5C arg=0 or arg=1. Do not retry automatically.
+   check(gen);report.pairFrames=1;$('progress').textContent='Ein Kopplungspaket gesendet – bis zu 6 Sekunden auf Bestätigung warten';
+   await send(await cryptoState.frame(4,0x5c,0,random));
+   await poll(()=>cryptoState.M,6000,gen);
+   $('progress').textContent='';
+   if(!cryptoState.M)throw Error('Stufe 2 nicht bestätigt. Kein automatischer Wiederholungsversuch; bitte Bericht sichern.');
+   log('Stufe 2 vom Roller bestätigt.');
+ }
+ status('Stufe 3: Anmeldung mit Roller-Challenge prüfen …');
+ for(let attempt=0;attempt<4&&!cryptoState.O;attempt++){check(gen);await send(await cryptoState.frame(4,0x5d,0,cryptoState.challenge));await poll(()=>cryptoState.O,950,gen)}
+ if(!cryptoState.O)throw Error('Stufe 3 wurde nicht bestätigt. Keine Fahrzeugbefehle gesendet. Nicht erneut starten.');
+ report.handshake={L:true,M:true,O:true};saveRandom(random);status('Authentifizierung erfolgreich. Firmware wird jetzt automatisch ausgelesen …');
+ await readInternal(gen);
+}catch(e){fail(e)}finally{busy=false;$('progress').textContent='';buttons()}}
+// Register list uses only read command 0x01; explicitly no fallback without stage O.
+const queries=[['VCU',0x16,0x17,2],['MCU',0x16,0x18,2],['BMS',0x16,0x19,2],['VCU-Status',0x16,0x01,2]];
+async function readInternal(gen){if(!cryptoState?.O)throw Error('Nicht authentifiziert: keine Leseabfragen.');report.reads=[];validatedFirmware=false;
+ for(const [name,dst,reg,len] of queries){check(gen);const mark=lastFrames.length;log('Lese Firmware: '+name+' Register '+reg.toString(16));await send(await cryptoState.frame(dst,0x01,reg,[len,0]));await poll(()=>lastFrames.slice(mark).some(f=>f.src===dst&&f.arg===reg&&(f.cmd===4||f.cmd===1)),1400,gen);const frame=lastFrames.slice(mark).find(f=>f.src===dst&&f.arg===reg&&(f.cmd===4||f.cmd===1));report.reads.push({name,register:reg,response:frame||null})}
+ validatedFirmware=report.reads.some(r=>r.response);showReads();status(validatedFirmware?'Authentifizierung und Firmwareabfrage erfolgreich.':'Authentifiziert, aber keine Firmwareantwort. Geschwindigkeitsbefehle bleiben gesperrt.');buttons();}
+async function read(){if(busy||!cryptoState?.O)return;busy=true;buttons();try{await readInternal(operationGeneration)}catch(e){fail(e)}finally{busy=false;buttons()}}
+async function speed(limit){status('Geschwindigkeitsänderung gesperrt: kein validierter Befehl für diese Firmware.');}
+async function copy(){const data=JSON.stringify(report,null,2);try{await navigator.clipboard.writeText(data);status('Diagnose kopiert. Keine Schlüssel enthalten.')}catch(e){const t=document.createElement('textarea');t.value=data;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();status('Diagnose kopiert.')}}
+function download(){const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='zt3-bericht-v7.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1500)}
+$('connect').addEventListener('click',()=>void connect());$('auth').addEventListener('click',()=>void auth());$('disconnect').addEventListener('click',()=>{device?.gatt?.disconnect()});$('read').addEventListener('click',()=>void read());$('normal').addEventListener('click',()=>void speed(20));$('private').addEventListener('click',()=>void speed(40));$('copy').addEventListener('click',()=>void copy());$('download').addEventListener('click',download);log('ZT3 Control v7 safe bereit. WebBluetooth='+Boolean(navigator.bluetooth));buttons();
+</script></body></html>
