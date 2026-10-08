@@ -10,7 +10,7 @@ pre{background:#080f1b;color:#d4e4ff;border-radius:11px;padding:12px;white-space
 </style></head><body><main><header><h1>ZT3 Control v8</h1><p class="muted">Crypto · Region · Originalzustand · ZT3 Pro D</p></header>
 <article><h2>Verbindung</h2><div id="status">Bereit. Roller einschalten und Segway-App schließen.</div><div id="progress"></div><button id="connect">1 · ZT3 auswählen und verbinden</button><button id="auth" class="secondary" disabled>2 · Authentifizieren & Firmware auslesen</button><button id="disconnect" class="secondary" disabled>Trennen</button>
 <div class="info"><strong>Wichtig für die erste Kopplung</strong><p>Während „Kopplung läuft“ angezeigt wird, <strong>einmal kurz</strong> auf die Power-Taste drücken – <strong>nicht gedrückt halten</strong>. Die App sendet einmalig einen Kopplungswert und wartet auf eine Bestätigung. Eine ausbleibende Antwort wird nicht durch weitere Pakete erzwungen. Der Roller muss eingeschaltet bleiben.</p></div>
-<label><input type="checkbox" id="consent"><span>Ich möchte genau einen begrenzten Kopplungsversuch durchführen. Er könnte eine vorhandene Fremd-App-Kopplung verändern.</span></label></article>
+<button id="freshPair" class="secondary" disabled>Neu-Kopplung ausdrücklich erlauben</button><label><input type="checkbox" id="consent"><span>Ich möchte genau einen begrenzten Kopplungsversuch durchführen. Er könnte eine vorhandene Fremd-App-Kopplung verändern.</span></label></article>
 <article><h2>Firmware und Fahrzeugdaten</h2><div id="firmware">Noch nicht authentifiziert. Es werden vorher keine Fahrzeugregister abgefragt.</div><button id="read" class="secondary" disabled>Region und Firmware erneut auslesen</button></article>
 <article><h2>Region und Geschwindigkeit</h2><div class="info" id="regionInfo">Nach der Authentifizierung liest die App die originale Seriennummer (Register 0x10) und das Register 0x48 aus. Bis dahin wird nichts verändert.</div><div id="speedMsg" class="tiny">Ein gesendeter Wert von 40 km/h hat die deutsche Begrenzung bisher nicht aufgehoben.</div>
 <button id="backup" class="safe" disabled>Originaldaten als JSON sichern</button>
@@ -29,12 +29,12 @@ const TX='6e400002-b5a3-f393-e0a9-e50e24dcca9e',RX='6e400003-b5a3-f393-e0a9-e50e
 const $=id=>document.getElementById(id),te=new TextEncoder(),hex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join(''),wait=ms=>new Promise(r=>setTimeout(r,ms));
 const salt=Uint8Array.from([0x97,0xcf,0xb8,2,0x84,0x41,0x43,0xde,0x56,0,0x2b,0x3b,0x34,0x78,0x0a,0x5d]);
 const report={schema:'zt3-region-verify-v8',createdAt:new Date().toISOString(),device:null,events:[],handshake:{L:false,M:false,O:false},pairFrames:0,reads:[],regionChanges:[],speedCommands:[],errors:[],disconnects:0};
-let device=null,server=null,writeChar=null,cryptoState=null,queue=[],running=false,busy=false,validatedFirmware=false,operationGeneration=0,lastFrames=[],authAttemptDone=false,currentSN=null,currentRegion=null,originalSN=null,originalSaved=false,validVcu158=false;
+let device=null,server=null,writeChar=null,cryptoState=null,queue=[],running=false,busy=false,validatedFirmware=false,operationGeneration=0,lastFrames=[],authAttemptDone=false,forceFreshPair=false,currentSN=null,currentRegion=null,originalSN=null,originalSaved=false,validVcu158=false;
 function log(s){report.events.push({at:new Date().toISOString(),text:s});$('log').textContent=report.events.slice(-35).map(e=>e.at.slice(11,19)+' '+e.text).join('\n');$('log').scrollTop=$('log').scrollHeight}
 function status(s){$('status').textContent=s;log(s)}
 function fail(e){const s=String(e?.message||e);report.errors.push(s);status('Fehler: '+s)}
-function regionCanWrite(){return !busy&&!!server?.connected&&!!cryptoState?.O&&validVcu158&&originalSaved&&!!currentSN&&!!originalSN&&/^1K1[A-Z0-9]{11}$/.test(currentSN)&&$('risk1').checked&&$('risk2').checked;}
-function buttons(){const on=!!server?.connected;$('connect').disabled=busy;$('auth').disabled=busy||!on||authAttemptDone;$('disconnect').disabled=busy||!on;$('read').disabled=busy||!on||!cryptoState?.O;$('backup').disabled=busy||!on||!cryptoState?.O||!currentSN||!validVcu158;$('toUS').disabled=!regionCanWrite()||currentRegion!=='D'||$('confirmText').value.trim().toUpperCase()!=='US';$('toDE').disabled=!regionCanWrite()||currentRegion!=='U'||$('confirmText').value.trim().toUpperCase()!=='DE';}
+function regionCanWrite(){return false && !busy&&!!server?.connected&&!!cryptoState?.O&&validVcu158&&originalSaved&&!!currentSN&&!!originalSN&&/^1K1[A-Z0-9]{11}$/.test(currentSN)&&$('risk1').checked&&$('risk2').checked;}
+function buttons(){const on=!!server?.connected;$('connect').disabled=busy;$('freshPair').disabled=busy||!on;$('auth').disabled=busy||!on||authAttemptDone;$('disconnect').disabled=busy||!on;$('read').disabled=busy||!on||!cryptoState?.O;$('backup').disabled=busy||!on||!cryptoState?.O||!currentSN||!validVcu158;$('toUS').disabled=!regionCanWrite()||currentRegion!=='D'||$('confirmText').value.trim().toUpperCase()!=='US';$('toDE').disabled=!regionCanWrite()||currentRegion!=='U'||$('confirmText').value.trim().toUpperCase()!=='DE';}
 function check(gen){if(gen!==operationGeneration||!server?.connected)throw Error('Bluetooth getrennt – Vorgang angehalten.')}
 const xor=(a,b)=>Uint8Array.from(a,(v,i)=>v^b[i]);
 async function aesBlock(key,block){const k=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},false,['encrypt']);const v=new Uint8Array(await crypto.subtle.encrypt({name:'AES-CBC',iv:new Uint8Array(16)},k,block));return v.slice(0,16)}
@@ -58,6 +58,7 @@ async function pump(){if(running)return;running=true;try{while(queue.length){con
 function onNotify(e){const v=e.target.value;queue.push(new Uint8Array(v.buffer.slice(v.byteOffset,v.byteOffset+v.byteLength)));void pump()}
 async function poll(fn,ms,gen){const until=Date.now()+ms;while(Date.now()<until){check(gen);if(fn())return true;await wait(55)}return !!fn()}
 function keyId(){return 'zt3-v7-pair-'+(device?.id||device?.name)}
+function allowFreshPair(){if(busy||!server?.connected)return;if(!$('consent').checked){status('Zuerst das Risiko-Kästchen bestätigen.');return;}if(!confirm('Gespeicherten Schlüssel für einen neuen Kopplungsversuch umgehen? Die bestehende Segway-App-Kopplung könnte beeinflusst werden.'))return;forceFreshPair=true;authAttemptDone=false;status('Neu-Kopplung freigegeben. Alter Schlüssel bleibt bis zum bestätigten Erfolg erhalten.');buttons();}
 function savedRandom(){try{const v=localStorage.getItem(keyId());return /^[a-f0-9]{32}$/i.test(v||'')?Uint8Array.from(v.match(/../g),x=>parseInt(x,16)):null}catch(_){return null}}
 function saveRandom(r){try{localStorage.setItem(keyId(),hex(r));log('Bestätigter Kopplungswert lokal gespeichert (nicht exportiert).')}catch(_){log('Lokale Speicherung nicht verfügbar: sichere Wiederverbindung nicht garantiert.')}}
 function versionFromHex(h){if(!/^[a-f0-9]{4}$/i.test(h||''))return null;const a=parseInt(h.slice(0,2),16),b=parseInt(h.slice(2,4),16);return b+'.'+(a>>4)+'.'+(a&15)}
@@ -73,12 +74,12 @@ async function connect(){if(busy)return;busy=true;buttons();try{
  if(device?.gatt?.connected)device.gatt.disconnect();
  status('Bluetooth-Geräteauswahl wird geöffnet …');device=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SVC]});
  if(!device.name||!/^1K1[A-Z0-9]{11}$/.test(device.name))throw Error('Bitte nur deinen ZT3 mit Kennung 1K1… auswählen.');
- report.device={name:device.name,id:device.id};authAttemptDone=false;currentSN=null;currentRegion=null;originalSN=null;originalSaved=false;validVcu158=false;showReads();
+ report.device={name:device.name,id:device.id};authAttemptDone=false;forceFreshPair=false;currentSN=null;currentRegion=null;originalSN=null;originalSaved=false;validVcu158=false;showReads();
  device.addEventListener('gattserverdisconnected',()=>{operationGeneration++;validatedFirmware=false;report.disconnects++;status('Bluetooth-Verbindung getrennt. Roller bleibt unverändert.');buttons()});
  server=await device.gatt.connect();const svc=await server.getPrimaryService(SVC);writeChar=await svc.getCharacteristic(TX);const notify=await svc.getCharacteristic(RX);notify.addEventListener('characteristicvaluechanged',onNotify);await notify.startNotifications();cryptoState=new NinebotCrypto(device.name);await cryptoState.init();status('Verbunden: '+device.name+'. Bereit zur Authentifizierung.');
 }catch(e){fail(e)}finally{busy=false;buttons()}}
 async function auth(){if(busy||!server?.connected)return;busy=true;const gen=operationGeneration;buttons();try{
- const saved=savedRandom();if(!saved&&!$('consent').checked){throw Error('Bitte zuerst das Kästchen für den begrenzten Erstkopplungsversuch markieren.')}
+ const saved=forceFreshPair?null:savedRandom();if(!saved&&!$('consent').checked){throw Error('Bitte zuerst das Kästchen für den begrenzten Erstkopplungsversuch markieren.')}
  authAttemptDone=true;cryptoState=new NinebotCrypto(device.name);await cryptoState.init();queue=[];lastFrames=[];validatedFirmware=false;report.reads=[];report.pairFrames=0;report.handshake={L:false,M:false,O:false};showReads();
  status('Stufe 1: Sitzungstoken lesen …');for(let attempt=0;attempt<3&&!cryptoState.L;attempt++){check(gen);await send(await cryptoState.frame(4,0x5b,0));await poll(()=>cryptoState.L,950,gen)}
  if(!cryptoState.L)throw Error('Keine Antwort auf Stufe 1 – abgebrochen.');
@@ -97,7 +98,7 @@ async function auth(){if(busy||!server?.connected)return;busy=true;const gen=ope
  status('Stufe 3: Anmeldung mit Roller-Challenge prüfen …');
  for(let attempt=0;attempt<4&&!cryptoState.O;attempt++){check(gen);await send(await cryptoState.frame(4,0x5d,0,cryptoState.challenge));await poll(()=>cryptoState.O,950,gen)}
  if(!cryptoState.O)throw Error('Stufe 3 wurde nicht bestätigt. Keine Fahrzeugbefehle gesendet. Nicht erneut starten.');
- report.handshake={L:true,M:true,O:true};saveRandom(random);status('Authentifizierung erfolgreich. Firmware wird jetzt automatisch ausgelesen …');
+ report.handshake={L:true,M:true,O:true};forceFreshPair=false;saveRandom(random);status('Authentifizierung erfolgreich. Firmware wird jetzt automatisch ausgelesen …');
  await readInternal(gen);
 }catch(e){fail(e)}finally{busy=false;$('progress').textContent='';buttons()}}
 // Register list uses only read command 0x01; explicitly no fallback without stage O.
@@ -114,5 +115,6 @@ async function changeRegion(target){if(!regionCanWrite())throw Error('Schutzbedi
 
 async function copy(){const data=JSON.stringify(report,null,2);try{await navigator.clipboard.writeText(data);status('Diagnose kopiert. Keine Schlüssel enthalten.')}catch(e){const t=document.createElement('textarea');t.value=data;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();status('Diagnose kopiert.')}}
 function download(){makeDownload(report,'zt3-bericht-region-v8.json')}
-$('connect').addEventListener('click',()=>void connect());$('auth').addEventListener('click',()=>void auth());$('disconnect').addEventListener('click',()=>{device?.gatt?.disconnect()});$('read').addEventListener('click',()=>void read());$('backup').addEventListener('click',backup);$('risk1').addEventListener('change',buttons);$('risk2').addEventListener('change',buttons);$('confirmText').addEventListener('input',buttons);$('toUS').addEventListener('click',()=>void changeRegion('U').catch(fail));$('toDE').addEventListener('click',()=>void changeRegion('D').catch(fail));$('copy').addEventListener('click',()=>void copy());$('download').addEventListener('click',download);log('ZT3 Region v8 bereit. WebBluetooth='+Boolean(navigator.bluetooth));buttons();
+$('freshPair').addEventListener('click',allowFreshPair);
+$('connect').addEventListener('click',()=>void connect());$('auth').addEventListener('click',()=>void auth());$('disconnect').addEventListener('click',()=>{device?.gatt?.disconnect()});$('read').addEventListener('click',()=>void read());$('backup').addEventListener('click',backup);$('risk1').addEventListener('change',buttons);$('risk2').addEventListener('change',buttons);$('confirmText').addEventListener('input',buttons);$('toUS').addEventListener('click',()=>void changeRegion('U').catch(fail));$('toDE').addEventListener('click',()=>void changeRegion('D').catch(fail));$('copy').addEventListener('click',()=>void copy());$('download').addEventListener('click',download);log('ZT3 Wiederverbindung v9 bereit. WebBluetooth='+Boolean(navigator.bluetooth));buttons();
 </script></body></html>
