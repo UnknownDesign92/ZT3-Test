@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>ZT3 Tool – Diagnose</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0e12;--card:#151a21;--muted:#98a2b3;--line:#28303b;--ok:#34c759;--warn:#ffcc00;--bad:#ff453a;--accent:#0a84ff}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px;padding-bottom:48px}
+.wrap{max-width:720px;margin:0 auto}.badge{display:inline-block;padding:5px 9px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:#c9d1d9}h1{font-size:26px;margin:12px 0 6px}.sub{color:var(--muted);line-height:1.45;margin-bottom:18px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0}.status{font-weight:650}.small{font-size:13px;color:var(--muted);line-height:1.45}.row{display:flex;gap:10px;flex-wrap:wrap}button{appearance:none;border:0;border-radius:14px;padding:14px 16px;font-size:16px;font-weight:700;background:var(--accent);color:#fff;flex:1;min-width:180px}button.secondary{background:#272d36}button:disabled{opacity:.45}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}pre{white-space:pre-wrap;word-break:break-word;background:#0d1117;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:12px;max-height:300px;overflow:auto}.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="badge">ZT3 Diagnose v3 · READ ONLY</span>
+  <h1>Segway ZT3 Pro D</h1>
+  <div class="sub">Diese Version sucht gezielt nach ZT3/Ninebot-Merkmalen und prüft den Roller nach der Auswahl. Es werden <b>keine</b> Einstellungen, Regionen, Limits oder Firmwaredaten geschrieben.</div>
+
+  <div class="card">
+    <div id="support" class="status">Bluetooth wird geprüft …</div>
+    <div id="supportInfo" class="small"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect">ZT3 suchen & verbinden</button>
+      <button id="fallback" class="secondary">Falls ZT3 nicht erscheint</button>
+    </div>
+    <p class="small">Erster Knopf: gezielte Suche über ZT3/Ninebot-Service, Gerätenamen und bekannte ZT3-Herstellerkennung. Der zweite Knopf zeigt bewusst alle BLE-Geräte, prüft aber nach der Auswahl, ob die erwarteten Ninebot-Dienste vorhanden sind.</p>
+  </div>
+
+  <div class="card">
+    <div id="state" class="status">Nicht verbunden</div>
+    <div id="detail" class="small">Roller einschalten, Segway-App schließen und iPhone direkt daneben halten.</div>
+  </div>
+
+  <div id="resultCard" class="card hide">
+    <div class="status">Diagnose</div>
+    <pre id="out"></pre>
+    <div class="row">
+      <button id="copy" class="secondary">Diagnose kopieren</button>
+      <button id="save" class="secondary">JSON sichern</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  'use strict';
+
+  // Documented Ninebot UART-style services used by current/legacy Segway stacks.
+  const MODERN_SERVICE = '6e400001-0000-0000-006e-696e65626f74';
+  const LEGACY_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+
+  // ZT3 manufacturer advertisement observed in public reverse-engineering notes:
+  // raw bytes: 4E 43 01 00 02 00 00 FC. BLE company id is little-endian,
+  // therefore 0x434E is primary; 0x4E43 is included as a compatibility fallback.
+  const MFG_PRIMARY = 0x434e;
+  const MFG_ALT = 0x4e43;
+  const MFG_PREFIX = new Uint8Array([0x01,0x00,0x02,0x00,0x00,0xfc]);
+
+  const $ = id => document.getElementById(id);
+  const support = $('support'), supportInfo = $('supportInfo'), state = $('state'), detail = $('detail');
+  const connectBtn = $('connect'), fallbackBtn = $('fallback'), resultCard = $('resultCard'), out = $('out');
+  let device = null, server = null, report = null;
+
+  function setState(title, text, cls='') {
+    state.className = 'status ' + cls;
+    state.textContent = title;
+    detail.textContent = text || '';
+  }
+
+  function props(c){
+    const p = c.properties || {};
+    return ['read','write','writeWithoutResponse','notify','indicate','authenticatedSignedWrites','reliableWrite']
+      .filter(k => p[k]);
+  }
+
+  async function inspectDevice(selected, mode) {
+    device = selected;
+    setState('Verbinde …', selected.name ? `Gerät: ${selected.name}` : 'Gerät ausgewählt – GATT-Verbindung wird aufgebaut.');
+
+    device.addEventListener('gattserverdisconnected', () => {
+      setState('Verbindung getrennt', 'Der ZT3 bzw. das ausgewählte BLE-Gerät ist nicht mehr verbunden.', 'warn');
+    }, {once:false});
+
+    server = await device.gatt.connect();
+
+    const services = [];
+    const foundExpected = [];
+    for (const uuid of [MODERN_SERVICE, LEGACY_SERVICE]) {
+      try {
+        const s = await server.getPrimaryService(uuid);
+        foundExpected.push(uuid);
+        const chars = await s.getCharacteristics();
+        services.push({
+          uuid: s.uuid,
+          characteristics: chars.map(c => ({uuid:c.uuid, properties:props(c)}))
+        });
+      } catch (_) {
+        // Expected when this particular service is absent.
+      }
+    }
+
+    const isNinebot = foundExpected.length > 0;
+    report = {
+      schema: 'zt3-tool-diagnostic-v3',
+      timestamp: new Date().toISOString(),
+      mode,
+      userAgent: navigator.userAgent,
+      device: {name: device.name || null, id: device.id || null},
+      expectedServices: {modern: MODERN_SERVICE, legacy: LEGACY_SERVICE},
+      matchedServices: foundExpected,
+      services,
+      verifiedAsNinebotGatt: isNinebot,
+      writesSent: 0
+    };
+
+    out.textContent = JSON.stringify(report, null, 2);
+    resultCard.classList.remove('hide');
+
+    if (isNinebot) {
+      setState('Ninebot/ZT3-BLE erkannt ✓', 'Verbindung steht. Es wurde ausschließlich gelesen/aufgelistet; es wurde kein Schreibbefehl gesendet.', 'ok');
+    } else {
+      try { device.gatt.disconnect(); } catch (_) {}
+      setState('Das war nicht der ZT3', 'Das ausgewählte Gerät besitzt keinen der erwarteten Ninebot-GATT-Dienste. Es wurde nichts geschrieben.', 'bad');
+    }
+  }
+
+  async function chooseTargeted() {
+    if (!navigator.bluetooth) throw new Error('Web Bluetooth ist in diesem Browser nicht verfügbar. Bitte die Seite in Bluefy öffnen.');
+
+    // OR across filters. This deliberately combines several independent ways a ZT3 may advertise,
+    // because firmware/browser combinations do not always expose the same advertisement fields.
+    const filters = [
+      { services: [MODERN_SERVICE] },
+      { services: [LEGACY_SERVICE] },
+      { namePrefix: 'ZT3' },
+      { namePrefix: 'Segway' },
+      { namePrefix: 'Ninebot' },
+      { manufacturerData: [{ companyIdentifier: MFG_PRIMARY, dataPrefix: MFG_PREFIX }] },
+      { manufacturerData: [{ companyIdentifier: MFG_ALT, dataPrefix: MFG_PREFIX }] },
+      { manufacturerData: [{ companyIdentifier: MFG_PRIMARY }] },
+      { manufacturerData: [{ companyIdentifier: MFG_ALT }] }
+    ];
+
+    setState('Suche ZT3 …', 'Bluefy öffnet gleich die gefilterte Bluetooth-Auswahl.');
+    const selected = await navigator.bluetooth.requestDevice({
+      filters,
+      optionalServices: [MODERN_SERVICE, LEGACY_SERVICE]
+    });
+    await inspectDevice(selected, 'targeted');
+  }
+
+  async function chooseFallback() {
+    if (!navigator.bluetooth) throw new Error('Web Bluetooth ist in diesem Browser nicht verfügbar. Bitte die Seite in Bluefy öffnen.');
+    setState('Manuelle Auswahl …', 'Diese Liste kann mehrere Geräte enthalten. Nach deiner Auswahl prüft die Seite automatisch die Ninebot-Dienste.');
+    const selected = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [MODERN_SERVICE, LEGACY_SERVICE]
+    });
+    await inspectDevice(selected, 'fallback-all-devices');
+  }
+
+  async function run(fn) {
+    connectBtn.disabled = fallbackBtn.disabled = true;
+    resultCard.classList.add('hide');
+    try {
+      await fn();
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (e && e.name === 'NotFoundError') setState('Keine Auswahl / nichts gefunden', 'Bluefy hat kein passendes Gerät zurückgegeben. Roller eingeschaltet lassen und Segway-App vollständig schließen.', 'warn');
+      else setState('Fehler', msg, 'bad');
+    } finally {
+      connectBtn.disabled = fallbackBtn.disabled = false;
+    }
+  }
+
+  connectBtn.addEventListener('click', () => run(chooseTargeted));
+  fallbackBtn.addEventListener('click', () => run(chooseFallback));
+
+  $('copy').addEventListener('click', async () => {
+    if (!report) return;
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    $('copy').textContent = 'Kopiert ✓';
+    setTimeout(() => $('copy').textContent = 'Diagnose kopieren', 1200);
+  });
+
+  $('save').addEventListener('click', () => {
+    if (!report) return;
+    const blob = new Blob([JSON.stringify(report, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ZT3-Diagnose-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  if (navigator.bluetooth) {
+    support.className = 'status ok';
+    support.textContent = 'Web Bluetooth verfügbar ✓';
+    supportInfo.textContent = 'Bluefy kann BLE-Geräte ansprechen. Diese Diagnose sendet keine Schreibbefehle.';
+  } else {
+    support.className = 'status bad';
+    support.textContent = 'Web Bluetooth nicht verfügbar';
+    supportInfo.textContent = 'Bitte diese Seite in Bluefy öffnen, nicht in Safari.';
+    connectBtn.disabled = fallbackBtn.disabled = true;
+  }
+})();
+</script>
+</body>
+</html>
