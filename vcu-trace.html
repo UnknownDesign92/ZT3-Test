@@ -115,7 +115,7 @@ function buildSummary(){
  const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
  const values={};for(const x of found){values[x.register]=x.reply.hex}
  const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v9',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
+ return {schema:'zt3-vcu-auto-analysis-v10',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
 }
 function refreshReport(reason){
  const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
@@ -224,6 +224,57 @@ async function testSettingsWriteAndRestore(){
 
 function hexWord32(num){return '0x'+num.toString(16).padStart(8,'0')}
 
+
+function inspectArteryFlashCodeFingerprint(plain){
+ const b=new Uint8Array(plain),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
+ // Public AT32 flash-controller register map and manufacturer-documented unlock constants.
+ const signatures=[
+  {name:'FLASH_CTRL_BASE',value:0x40022000,meaning:'Flash controller base; memory-mapped peripheral'},
+  {name:'FLASH_UNLOCK',value:0x40022004,meaning:'Register address for on-chip Flash unlock'},
+  {name:'FLASH_STS',value:0x4002200c,meaning:'Flash operation status register'},
+  {name:'FLASH_CTRL',value:0x40022010,meaning:'Flash operation control register'},
+  {name:'FLASH_ADDR',value:0x40022014,meaning:'Flash erase/program address register'},
+  {name:'FLASH_KEY1',value:0x45670123,meaning:'Documented hardware Flash unlock sequence constant 1'},
+  {name:'FLASH_KEY2',value:0xcdef89ab,meaning:'Documented hardware Flash unlock sequence constant 2'},
+  {name:'CRM_BASE',value:0x40021000,meaning:'Clock reset management base on compatible AT32 families'},
+  {name:'USD_BASE',value:0x1ffff800,meaning:'User/system option data region on some AT32 parts'},
+  {name:'UID_BASE',value:0x1ffff7e8,meaning:'Unique ID region on compatible AT32 parts'}
+ ];
+ const lookups=signatures.map(def=>{
+  const found=[];
+  for(let i=0;i+4<=b.length;i+=4){
+   if(dv.getUint32(i,true)===def.value)found.push('0x'+i.toString(16).padStart(6,'0'));
+  }
+  return {...def,hex:hexWord32(def.value),occurrences:found.length,offsets:found.slice(0,18)};
+ });
+ const addresses=Object.fromEntries(lookups.map(x=>[x.name,x]));
+ const controllerSites=[];
+ // The former Thumb-1 literal scanner found LDR instructions pointing to 0x40022000.
+ for(let offset=0x100;offset+2<=b.length;offset+=2){
+  const opcode=dv.getUint16(offset,true);
+  if((opcode&0xf800)!==0x4800)continue;
+  const constantOffset=(((0x08000000+offset+4)&~3)+((opcode&255)*4))-0x08000000;
+  if(constantOffset<0||constantOffset+4>b.length||dv.getUint32(constantOffset,true)!==0x40022000)continue;
+  const nearby=[];
+  for(let site=Math.max(0,offset-14);site<=Math.min(b.length-2,offset+18);site+=2){
+   nearby.push({imageOffset:hexWord32(site),halfword:hexWord32(dv.getUint16(site,true)).slice(-4)});
+  }
+  controllerSites.push({ldrImageOffset:hexWord32(offset),literalOffset:hexWord32(constantOffset),opcode16:'0x'+opcode.toString(16).padStart(4,'0'),nearbyHalfwords:nearby});
+ }
+ return {
+  schema:'zt3-at32-flash-fingerprint-v1',
+  signatures:lookups,
+  controllerLiteralLoadSites:controllerSites.slice(0,12),
+  controllerCodeReferenceCount:controllerSites.length,
+  hasBothManufacturerFlashKeyConstants:addresses.FLASH_KEY1.occurrences>0&&addresses.FLASH_KEY2.occurrences>0,
+  hasFlashControllerRegisterMap:addresses.FLASH_CTRL_BASE.occurrences>0,
+  likelyInternalFlashHelperCode:addresses.FLASH_CTRL_BASE.occurrences>0,
+  firmwareContainsBluetoothFlashAuthorizationCode:'not established',
+  hardwareChipFamily:'AT32/STM32F1-style register map consistent; exact MCU not verified',
+  warning:'This is an offline static fingerprint. 0x45670123 / 0xCDEF89AB are public on-chip Flash peripheral keys, NOT a Bluetooth OTA authorization key. No write or exploit is attempted.'
+ };
+}
+
 function inspectThumbLiteralMemoryReferences(plain){
  const bytes=new Uint8Array(plain),dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
  const base=0x08000000;
@@ -319,7 +370,7 @@ function offlineArmFirmwareInfo(plain){
  const terms=/firmware|bootloader|boot|update|flash|auth|unlock|sign|hash|encrypt|decrypt|tea|aes|checksum|crc|iap|vcu|segway|ninebot|zt3|at32|error|version|uart|swd|dfu/i;
  const important=allStrings.filter(x=>terms.test(x.text));
  return {
-  schema:'zt3-arm-cortexm-static-v2',
+  schema:'zt3-arm-cortexm-static-v3',
   flashBase:hexWord32(flashBase),assumedFlashImageEnd:hexWord32(flashEnd),
   imageBytes:b.length,
   initialStackPointer:hexWord32(sp),stackPointerInPlausibleSram:stackInRam,
@@ -327,6 +378,7 @@ function offlineArmFirmwareInfo(plain){
   likelyCortexMFirmware:stackInRam&&resetThumb&&resetInImage&&plausibleHandlers>=3,
   plausibleExceptionAndIrqHandlers:plausibleHandlers,
   thumbMemoryReferenceAnalysis:inspectThumbLiteralMemoryReferences(plain),
+  flashControllerFingerprint:inspectArteryFlashCodeFingerprint(plain),
   vectors:entries,
   printableStringsFound:allStrings.length,
   firmwareRelevantStrings:important.slice(0,40),
@@ -337,7 +389,7 @@ function offlineArmFirmwareInfo(plain){
 function firmwareCompactObject(){
  const p=report.firmwarePackage||{};
  return {
-  schema:'zt3-vcu-firmware-only-v9',createdAt:stamp(),
+  schema:'zt3-vcu-firmware-only-v10',createdAt:stamp(),
   scooter:{model:'ZT3 Pro',installedVcu:report.firmware.vcu||'not read this session',region:report.firmware.region||'not read'},
   package:{source:p.source,zipSha256:p.zipSha256,firmwareSha256:p.firmwareSha256,firmwareBytes:p.entries?.find(x=>x.name==='FIRM.bin.enc')?.bytes,manifest:p.manifest,decryptedWithPublicStandardKey:p.decryptedWithPublicStandardKey,decryptedVariant:p.decryptedVariant,standardKeyTests:p.standardKeyTests,staticBinary:p.staticBinary,compatibilityConfirmed:false,firmwareFlashPermissionTested:false},
   conclusion:'Offline analysis only. No firmware flash and no proof of firmware-level write permission.'
@@ -512,7 +564,7 @@ async function analyzeFwFile(file,source){
     }
     result.standardKeyTests=checks;
     result.decryptedWithPublicStandardKey=!!result.decryptedWithPublicStandardKey;
-    $('fwStaticStatus').textContent=result.staticBinary?(result.staticBinary.likelyCortexMFirmware?'ARM-Cortex-M-Vektortabelle plausibel. ':'Vektortabelle nicht ausreichend plausibel. ')+'Reset '+result.staticBinary.resetHandler+'; '+result.staticBinary.plausibleExceptionAndIrqHandlers+' Handler; '+result.staticBinary.thumbMemoryReferenceAnalysis.possibleFlashControllerReferences.length+' hypothetische Flash-Controller-Referenzen. Details im kompakten Bericht.':'Keine gueltige Entschluesselung mit den oeffentlichen Standardschluesseln.';
+    $('fwStaticStatus').textContent=result.staticBinary?(result.staticBinary.likelyCortexMFirmware?'ARM-Cortex-M-Vektortabelle plausibel. ':'Vektortabelle nicht ausreichend plausibel. ')+'Reset '+result.staticBinary.resetHandler+'; '+result.staticBinary.flashControllerFingerprint.controllerCodeReferenceCount+' Flash-Controller-Referenzen; beide Hersteller-Flash-Schluessel im Abbild: '+(result.staticBinary.flashControllerFingerprint.hasBothManufacturerFlashKeyConstants?'JA':'NEIN')+'. Nur Offline-Analyse; kein Bluetooth-Entsperren.':'Keine gueltige Entschluesselung mit den oeffentlichen Standardschluesseln.';
     $('fwCopyAnalysis').disabled=false;
     $('fwDecryptStatus').textContent=result.decryptedWithPublicStandardKey?
        'Standard-Key '+result.decryptedVariant.toUpperCase()+' besteht die Firmware-Pruefsumme. Entschluesseltes Abbild offline verfuegbar; Eignung fuer deinen Roller NICHT bewiesen.':
