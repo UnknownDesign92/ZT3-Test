@@ -23,7 +23,12 @@
 <button id="activeProbe" class="secondary" disabled>Änderung testen + automatisch zurücksetzen</button>
 <p id="activeProbeStatus" class="note">Noch nicht durchgeführt. Dieser Test startet niemals automatisch.</p>
 </article>
-<article><h2>5. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
+<article><h2>5. VCU-Firmwarepaket technisch analysieren (ohne Flash)</h2>
+<p class="note">Das ZIP wird nur im Browser untersucht: Dateiliste, info.json, Modulkennung, Verschluesselungsangaben und SHA-256. <strong>Es wird niemals an den Roller gesendet.</strong> Eine ZIP-Metadatenpruefung beweist weder Firmware-Kompatibilitaet noch eine Freischaltung.</p>
+<div class="row"><button id="fwAnalyze" class="secondary">Oeffentliches VCU-ZIP analysieren</button><input id="fwZip" type="file" accept=".zip,application/zip" aria-label="Eigenes Firmware-ZIP auswaehlen"></div>
+<p id="fwAnalyzeStatus" class="note">Nicht analysiert. Kann auch ohne Bluetooth-Verbindung ausgefuehrt werden.</p>
+</article>
+<article><h2>6. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
 <p class="note">Vorherigen ZT3-Registerscan oder VCU-Trace als JSON laden, um Unterschiede und fehlende Antworten zu erkennen.</p><input id="baseline" type="file" accept="application/json,.json"><p id="difference" class="note">Noch kein Vergleich geladen.</p>
 <pre id="log">Bereit.</pre></article>
 <article><h2>Einordnung</h2><p class="note">Ein fehlendes READ-Ergebnis ist kein eindeutiger Sperrbeweis. Ein ACK bestätigt für sich allein auch keinen freigegebenen Firmware-Flash. Der Vergleich zeigt reproduzierbare Geräteantworten und ist eine Grundlage für weitere Protokollanalyse, kein Umgehungswerkzeug. GATT-Schlüssel, Sitzungstoken, Challenge und die vollständige Seriennummer werden nicht exportiert.</p></article>
@@ -106,7 +111,7 @@ function buildSummary(){
  const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
  const values={};for(const x of found){values[x.register]=x.reply.hex}
  const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v5',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
+ return {schema:'zt3-vcu-auto-analysis-v6',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
 }
 function refreshReport(reason){
  const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
@@ -208,6 +213,108 @@ async function testSettingsWriteAndRestore(){
  }finally{busy=false;buttons()}
 }
 
+
+const ZT3_PUBLIC_VCU_URL='https://raw.githubusercontent.com/HeckerHeckt/Ninebot-Tuning-Files/main/ZT3%2050kmh%20VCU.zip';
+function le16(d,i){return d.getUint16(i,true)}
+function le32(d,i){return d.getUint32(i,true)}
+async function digestHex(bytes){
+ const b=await crypto.subtle.digest('SHA-256',bytes);
+ return hex(new Uint8Array(b));
+}
+function inspectZip(buffer){
+ const bytes=new Uint8Array(buffer);
+ if(bytes.length<22||bytes.length>2000000)throw Error('ZIP leer oder groesser als 2 MB');
+ const view=new DataView(buffer);
+ let eocd=-1;
+ for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--){
+  if(le32(view,i)===0x06054b50){eocd=i;break}
+ }
+ if(eocd<0)throw Error('Kein ZIP-Endverzeichnis erkannt');
+ const count=le16(view,eocd+10),central=le32(view,eocd+16);
+ if(count>30||central>=bytes.length)throw Error('Unplausible ZIP-Dateiliste');
+ let cursor=central;
+ const entries=[];
+ for(let i=0;i<count;i++){
+  if(cursor+46>bytes.length||le32(view,cursor)!==0x02014b50)throw Error('Fehler im zentralen ZIP-Dateiverzeichnis');
+  const flags=le16(view,cursor+8),method=le16(view,cursor+10),crc=le32(view,cursor+16);
+  const csize=le32(view,cursor+20),usize=le32(view,cursor+24);
+  const nameLen=le16(view,cursor+28),extraLen=le16(view,cursor+30),commentLen=le16(view,cursor+32),offset=le32(view,cursor+42);
+  if(cursor+46+nameLen+extraLen+commentLen>bytes.length||offset+30>bytes.length)throw Error('ZIP-Dateigrenzen ungueltig');
+  const name=new TextDecoder().decode(bytes.slice(cursor+46,cursor+46+nameLen));
+  if(le32(view,offset)!==0x04034b50)throw Error('Lokaler ZIP-Dateikopf fehlt');
+  const off=offset+30+le16(view,offset+26)+le16(view,offset+28);
+  if(off+csize>bytes.length)throw Error('ZIP-Datei ueberschreitet Container');
+  entries.push({name,flags,method,compressedBytes:csize,bytes:usize,crc32:crc.toString(16).padStart(8,'0'),offset:off});
+  cursor+=46+nameLen+extraLen+commentLen;
+ }
+ return {bytes,entries};
+}
+async function extractZipEntry(pkg,entry){
+ if(entry.bytes>300000||entry.compressedBytes>300000)throw Error('ZIP-Inhalt zu gross fuer sichere Analyse');
+ const compressed=pkg.bytes.slice(entry.offset,entry.offset+entry.compressedBytes);
+ if(entry.method===0)return compressed;
+ if(entry.method!==8)throw Error('ZIP-Kompressionsmethode '+entry.method+' nicht unterstuetzt');
+ if(typeof DecompressionStream==='undefined')throw Error('Bluefy bietet hier keine ZIP-Deflate-Dekompression');
+ try{
+  const stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const raw=new Uint8Array(await new Response(stream).arrayBuffer());
+  if(raw.length!==entry.bytes)throw Error('Entpackte Laenge passt nicht');
+  return raw;
+ }catch(e){throw Error('ZIP-Deflate kann in diesem Browser nicht dekodiert werden: '+String(e?.message||e))}
+}
+function safeFirmwareFields(obj){
+ if(!obj||typeof obj!=='object')return null;
+ const text=JSON.stringify(obj);
+ if(text.length>10000)return {error:'Manifest ist zu gross'};
+ return obj;
+}
+async function analyzeFwFile(file,source){
+ const statusEl=$('fwAnalyzeStatus');
+ statusEl.textContent='Firmwaredatei wird lokal geprueft. Es wird nichts geflasht …';
+ try{
+  const buffer=await file.arrayBuffer();
+  const zip=inspectZip(buffer);
+  const result={schema:'zt3-vcu-package-inspection-v1',at:stamp(),source,file:file.name,
+   zipBytes:buffer.byteLength,zipSha256:await digestHex(buffer),entries:zip.entries.map(({name,flags,method,compressedBytes,bytes,crc32})=>({name,flags,method,compressedBytes,bytes,crc32})),
+   encryptedFirmwarePresent:zip.entries.some(e=>e.name==='FIRM.bin.enc'),
+   plainFirmwarePresent:zip.entries.some(e=>e.name==='FIRM.bin'),
+   manifest:null,manifestError:null,firmwareSha256:null,compatibleWithCurrentVcu:'unverified',flashAvailable:false,flashed:false};
+  const info=zip.entries.find(e=>e.name.toLowerCase()==='info.json');
+  if(info){
+   try{const data=await extractZipEntry(zip,info);result.manifest=safeFirmwareFields(JSON.parse(new TextDecoder().decode(data)))}
+   catch(e){result.manifestError=String(e?.message||e)}
+  }else result.manifestError='Keine info.json enthalten';
+  const fw=zip.entries.find(e=>e.name==='FIRM.bin.enc'||e.name==='FIRM.bin');
+  if(fw){
+   try{
+    const data=await extractZipEntry(zip,fw);
+    result.firmwareSha256=await digestHex(data);
+    result.firmwareHeader16=hex(data.slice(0,16));
+   }catch(e){result.binaryInspectionError=String(e?.message||e)}
+  }
+  report.firmwarePackage=result;
+  const manifestNote=result.manifestError?'Manifest nicht lesbar: '+result.manifestError:'Manifest gelesen';
+  statusEl.textContent='ZIP: '+zip.entries.length+' Dateien. '+(result.encryptedFirmwarePresent?'Verschluesseltes Firmware-Abbild erkannt. ':'')+manifestNote+'. Vollstaendige Daten im kopierbaren Bericht. Keine VCU-Aenderung.';
+  refreshReport('Firmware-ZIP offline analysiert');
+ }catch(e){const msg=String(e?.message||e);statusEl.textContent='Paket-Analyse fehlgeschlagen: '+msg;report.firmwarePackage={error:msg,source};refreshReport('Firmware-Analyse fehlgeschlagen')}
+}
+async function fetchFirmwareZip(){
+ const el=$('fwAnalyze');
+ el.disabled=true;
+ try{
+  $('fwAnalyzeStatus').textContent='Oeffentliches VCU-ZIP wird geladen …';
+  const r=await fetch(ZT3_PUBLIC_VCU_URL,{cache:'no-store'});
+  if(!r.ok)throw Error('Download HTTP '+r.status);
+  const buffer=await r.arrayBuffer();
+  if(buffer.byteLength>2000000)throw Error('Datei groesser als 2 MB');
+  const f=new File([buffer],'ZT3-public-VCU.zip',{type:'application/zip'});
+  await analyzeFwFile(f,'public GitHub firmware ZIP');
+ }catch(e){const msg=String(e?.message||e);$('fwAnalyzeStatus').textContent='Download/Analyse blockiert: '+msg+'. Alternativ ZIP-Datei rechts auswaehlen.';report.firmwarePackage={source:'public URL',error:msg};refreshReport('Firmwarepaket konnte nicht geladen werden')}
+ finally{el.disabled=false}
+}
+$('fwAnalyze').addEventListener('click',()=>void fetchFirmwareZip());
+$('fwZip').addEventListener('change',()=>{const f=$('fwZip').files?.[0];if(f)void analyzeFwFile(f,'local upload')});
+
 async function copyReport(){
  const content=$('reportOutput').value;if(!content)return;
  try{await navigator.clipboard.writeText(content);$('analysisState').textContent='Bericht kopiert! Jetzt hier in ChatGPT einfügen.'}
@@ -215,5 +322,5 @@ async function copyReport(){
 }
 
 function saveJson(){const data={...report,exportedAt:stamp(),safety:'READ only. No flash, no unlock, no credentials included.'},blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='ZT3-VCU-Trace-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
-$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('activeProbe').addEventListener('click',()=>void testSettingsWriteAndRestore());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;report.activeWriteProbe=null;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
+$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('activeProbe').addEventListener('click',()=>void testSettingsWriteAndRestore());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;report.activeWriteProbe=null;report.firmwarePackage=null;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
 </script></body></html>
