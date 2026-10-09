@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZT3 VCU Diagnose</title>
+<style>
+:root{color-scheme:dark}body{font:16px system-ui,Arial;max-width:850px;margin:auto;padding:20px;background:#0e1624;color:#e7edf7}
+h1{margin-bottom:4px}p{line-height:1.5}.sub{color:#afc3dc}section{background:#18283d;border:1px solid #304967;border-radius:16px;padding:18px;margin:14px 0}
+input,button{font:inherit;padding:12px;border-radius:9px;color:inherit;border:1px solid #537ba7;background:#253b56;max-width:100%}
+button{cursor:pointer;background:#1466bd}small{color:#a9bdd4}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px 5px;border-bottom:1px solid #37485d;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#0e1927;padding:12px;border-radius:8px;font-size:12px}
+.good{color:#90edba}.warn{color:#ffd78a}
+</style></head><body>
+<h1>ZT3 Pro D – VCU-Protokollanalyse</h1>
+<p class="sub">Lokale Auswertung deiner bestehenden Web-App-Berichte. Keine Bluetooth-Befehle, kein Schreibversuch und kein Flash.</p>
+<section><h2>1. Diagnosebericht laden</h2>
+<p>In ZT3 Control unter „JSON-Bericht speichern“ oder „Alle Scan-Daten als JSON sichern“ exportieren.</p>
+<input id="file" type="file" accept=".json,application/json"><p id="loaded">Noch keine Datei geladen.</p></section>
+<section><h2>2. Ergebnis</h2><div id="summary">Nach dem Import erscheinen Firmware, Anmeldung, Register und etwaige Ablehnungen.</div></section>
+<section><h2>3. Ereignisse und Antworten</h2><div id="events">Keine Daten.</div></section>
+<section><h2>4. Bericht exportieren</h2><button id="export" disabled>Analyse als JSON speichern</button><p><small>Die Analyse erkennt nur anhand vorhandener Daten mögliche Symptome. Sie kann weder eine VCU-Sperre ausschalten noch einen geschützten Firmwarebereich auslesen.</small></p></section>
+<script>
+'use strict';
+const byId=x=>document.getElementById(x);let analysis=null;
+const esc=s=>String(s??'–').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const row=(name,val)=>'<tr><th>'+esc(name)+'</th><td>'+esc(val)+'</td></tr>';
+const regname={16:'Seriennummer',23:'VCU',24:'MCU',25:'BMS',70:'Sportmaximum',72:'Geschwindigkeit'};
+function analyze(o){
+const reads=Array.isArray(o.reads)?o.reads:Array.isArray(o.registerScan?.results)?o.registerScan.results:[];
+const scan=o.registerScan||null;
+const auth=o.handshake||o.connection||{};
+const changes=[...(o.speedChanges||[]),...(o.regionChanges||[])];
+const fields=new Map();
+for(const r of reads){
+const key=r.name||regname[Number(r.register)]||'Register '+String(r.register);
+const payload=r.response?.payload||r.payload||r.responseHex||null;
+if(payload)fields.set(key,payload);
+}
+const fw=o.firmwareAssessment||o.firmware||{};
+const vcu=fw.vcu||fw.vcuversion||null;
+const region=fw.region||null;
+const ev=(o.events||[]).map(x=>({time:x.at||'',message:String(x.text||x.message||'')})); 
+const fails=changes.filter(x=>x.verified===false||x.error).length;
+const confirmed=changes.filter(x=>x.verified===true).length;
+const transmissions=(o.protocolTrace||[]).map(x=>({direction:x.dir||'?',command:x.cmd||null,arg:x.arg||null,device:x.src??x.dst??null}));
+return {schema:'zt3-vcu-analysis-1',analyzedAt:new Date().toISOString(),device:o.device?.name||null,firmware:vcu,region,handshake:auth,foundRegisters:Object.fromEntries(fields),attempts:{total:changes.length,confirmed,unconfirmed:fails},scan:scan?{attempted:scan.attempted,total:scan.total,noResponse:scan.noResponse,completed:!!scan.completed}:null,events:ev.slice(-60),frameLog:transmissions.slice(-200),conclusion:vcu==='1.5.8'&&fails>0?'VCU 1.5.8 und nicht bestätigte Schreibversuche: Sperre möglich, aber Ursache aus JSON allein nicht sicher bestimmbar.':changes.length?'Schreibversuche erfasst. Ein Rücklesewert belegt keinen Firmware-Unlock.':'Es liegen keine protokollierten Schreibversuche vor. Firmware-Schreibschutz aus diesem Bericht nicht prüfbar.'}
+}
+byId('file').addEventListener('change',async e=>{
+try{
+const f=e.target.files?.[0];if(!f)return;
+if(f.size>8e6)throw Error('Maximal 8 MB');
+const o=JSON.parse(await f.text());analysis=analyze(o);
+byId('loaded').textContent='Geladen: '+f.name;
+byId('summary').innerHTML='<table>'+[
+row('Fahrzeug',analysis.device),row('VCU',analysis.firmware),row('Region',analysis.region),
+row('Bluetooth angemeldet',analysis.handshake?.O===true?'Ja':analysis.handshake?.authenticated===true?'Ja':'Nicht bestätigt'),
+row('Schreibversuche',analysis.attempts.total),row('Bestätigt',analysis.attempts.confirmed),row('Nicht bestätigt',analysis.attempts.unconfirmed),
+row('Registerantworten',Object.keys(analysis.foundRegisters).length),
+row('Ergebnis',analysis.conclusion)
+].join('')+'</table><h3>Gelesene Werte</h3><pre>'+esc(JSON.stringify(analysis.foundRegisters,null,2))+'</pre>';
+byId('events').innerHTML='<pre>'+esc(analysis.events.slice(-30).map(e=>e.time+' '+e.message).join('\n')||'Keine protokollierten Ereignisse')+'</pre>';
+byId('export').disabled=false;
+}catch(err){analysis=null;byId('loaded').textContent='Dateifehler: '+String(err.message||err);byId('export').disabled=true}
+});
+byId('export').addEventListener('click',()=>{
+if(!analysis)return;
+const blob=new Blob([JSON.stringify(analysis,null,2)],{type:'application/json'});
+const u=URL.createObjectURL(blob),a=document.createElement('a');
+a.href=u;a.download='ZT3-VCU-Analyse.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1500);
+});
+</script></body></html>
