@@ -18,7 +18,12 @@
 <p class="note">Dieser Test schreibt nur den zuvor gelesenen, <strong>identischen</strong> Auto-Abschaltzeit-Wert auf VCU-Register <code>0x49</code> zurueck. Keine Geschwindigkeitsaenderung, kein Firmware-Update. Nur am stehenden Roller. Auch eine Antwort beweist <strong>keine</strong> Flash-Freigabe.</p>
 <button id="writeProbe" class="secondary" disabled>VCU WRITE-Antwort pruefen</button>
 <p id="writeProbeStatus" class="note">Nicht geprueft. Kein Schreibvorgang im automatischen Scan.</p></article>
-<article><h2>4. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
+<article><h2>4. Tatsächlichen Einstellungs-Schreibzugriff testen (optional)</h2>
+<p class="note">Einmaliger kontrollierter Test am stehenden Roller: Auto-Abschaltzeit in Register <code>0x49</code> von ihrem aktuellen Wert um <strong>eine Minute</strong> erhöhen, Wert zurücklesen und den Originalwert sofort wiederherstellen. Nur bei gültigem Originalwert zwischen 1 und 59 Minuten. Dies ist kein Firmware-Test und betrifft keine Geschwindigkeits- oder Schutzparameter.</p>
+<button id="activeProbe" class="secondary" disabled>Änderung testen + automatisch zurücksetzen</button>
+<p id="activeProbeStatus" class="note">Noch nicht durchgeführt. Dieser Test startet niemals automatisch.</p>
+</article>
+<article><h2>5. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
 <p class="note">Vorherigen ZT3-Registerscan oder VCU-Trace als JSON laden, um Unterschiede und fehlende Antworten zu erkennen.</p><input id="baseline" type="file" accept="application/json,.json"><p id="difference" class="note">Noch kein Vergleich geladen.</p>
 <pre id="log">Bereit.</pre></article>
 <article><h2>Einordnung</h2><p class="note">Ein fehlendes READ-Ergebnis ist kein eindeutiger Sperrbeweis. Ein ACK bestätigt für sich allein auch keinen freigegebenen Firmware-Flash. Der Vergleich zeigt reproduzierbare Geräteantworten und ist eine Grundlage für weitere Protokollanalyse, kein Umgehungswerkzeug. GATT-Schlüssel, Sitzungstoken, Challenge und die vollständige Seriennummer werden nicht exportiert.</p></article>
@@ -34,7 +39,7 @@ function stamp(){return new Date().toISOString()}
 function log(msg){report.events.push({at:stamp(),message:msg});if(report.events.length>300)report.events.shift();$('log').textContent=report.events.slice(-75).map(x=>x.at.slice(11,19)+' '+x.message).join('\n');$('log').scrollTop=$('log').scrollHeight}
 function status(s){$('status').textContent=s;log(s)}
 function fail(e){let msg=String(e?.message||e);report.errors.push({at:stamp(),error:msg});status('Fehler: '+msg)}
-function buttons(){const auth=!!server?.connected&&!!crypt?.O;$('connect').disabled=busy;$('disconnect').disabled=busy||!server?.connected;$('quick').disabled=busy||!auth;$('full').disabled=busy||!auth;$('delta').disabled=busy||!auth||!snapshotA;$('writeProbe').disabled=busy||!auth;$('stop').disabled=!scanning;$('authState').textContent=auth?'Bluetooth + Ninebot-Sitzung bestätigt':server?.connected?'Bluetooth verbunden; Authentifizierung läuft':'nicht verbunden';$('copyReport').disabled=!$('reportOutput').value}
+function buttons(){const auth=!!server?.connected&&!!crypt?.O;$('connect').disabled=busy;$('disconnect').disabled=busy||!server?.connected;$('quick').disabled=busy||!auth;$('full').disabled=busy||!auth;$('delta').disabled=busy||!auth||!snapshotA;$('writeProbe').disabled=busy||!auth;$('activeProbe').disabled=busy||!auth;$('stop').disabled=!scanning;$('authState').textContent=auth?'Bluetooth + Ninebot-Sitzung bestätigt':server?.connected?'Bluetooth verbunden; Authentifizierung läuft':'nicht verbunden';$('copyReport').disabled=!$('reportOutput').value}
 const xor=(a,b)=>Uint8Array.from(a,(v,i)=>v^b[i]);
 async function aesBlock(key,block){const k=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},false,['encrypt']);const v=new Uint8Array(await crypto.subtle.encrypt({name:'AES-CBC',iv:new Uint8Array(16)},k,block));return v.slice(0,16)}
 async function sha1(v){return new Uint8Array(await crypto.subtle.digest('SHA-1',v))}
@@ -101,7 +106,7 @@ function buildSummary(){
  const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
  const values={};for(const x of found){values[x.register]=x.reply.hex}
  const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v4',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Only non-mutating register reads were used. No flash/unlock performed. A non-response cannot prove firmware protection.'}};
+ return {schema:'zt3-vcu-auto-analysis-v5',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
 }
 function refreshReport(reason){
  const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
@@ -137,6 +142,72 @@ async function probeWritePath(){
  finally{busy=false;buttons()}
 }
 
+
+async function testSettingsWriteAndRestore(){
+ if(busy||!server?.connected||!crypt?.O)return;
+ if(!confirm('ROLLER MUSS STEHEN. Soll die automatische Abschaltzeit einmalig um 1 Minute veraendert und sofort auf ihren Ausgangswert zurueckgesetzt werden? Kein Firmware-Flash.'))return;
+ busy=true;buttons();const gen=generation;
+ const trial={schema:'zt3-vcu-0x49-write-restore-v1',at:stamp(),register:'0x49',purpose:'Verify actual setting write and restore',baseline:null,temporary:null,temporaryAck:null,temporaryReadback:null,temporaryConfirmed:false,restoreAck:null,finalReadback:null,restored:false,flashPermission:'not tested',errors:[]};
+ report.activeWriteProbe=trial;
+ let attempted=false;
+ const put49=async(data,stage)=>{
+  connected(gen);
+  const mark=sequence;
+  await send(await crypt.frame(0x16,0x02,0x49,Uint8Array.from(data.match(/../g),x=>parseInt(x,16))));
+  await poll(()=>frames.some(f=>f.seq>mark&&f.src===0x16&&f.dst===0x3e&&f.cmd===0x05&&f.arg===0x49),1800,gen);
+  const ack=frames.find(f=>f.seq>mark&&f.src===0x16&&f.dst===0x3e&&f.cmd===0x05&&f.arg===0x49);
+  return ack?{command:'0x05',register:'0x49',payload:ack.payload}:null;
+ };
+ try{
+  status('Konfiguration lesen: 0x49');
+  const start=await readReg(0x16,0x49,2,gen,1300);
+  const raw=start.raw?.toLowerCase();
+  if(!/^[a-f0-9]{4}$/.test(raw||''))throw Error('Kein sicherer 2-Byte Ausgangswert. Abbruch ohne WRITE.');
+  const number=parseInt(raw.slice(0,2),16)+(parseInt(raw.slice(2,4),16)<<8);
+  if(number<1||number>59)throw Error('0x49 nicht im erwarteten Bereich 1 bis 59 Minuten. Kein WRITE.');
+  trial.baseline=raw;
+  trial.temporary=(number+1).toString(16).padStart(4,'0').match(/../g).reverse().join('');
+  $('activeProbeStatus').textContent='Original '+raw+' ('+number+' min). Testwert '+trial.temporary+' ('+(number+1)+' min).';
+  try {
+   status('Testwert schreiben; Original wird unmittelbar danach wiederhergestellt');
+   attempted=true;
+   trial.temporaryAck=await put49(trial.temporary,'temporary');
+   await wait(200);
+   const probe=await readReg(0x16,0x49,2,gen,1200);
+   trial.temporaryReadback=probe.raw?.toLowerCase()||null;
+   trial.temporaryConfirmed=trial.temporaryReadback===trial.temporary;
+  }catch(e){trial.errors.push('Temporaerer Versuch: '+String(e.message||e))}
+  finally{
+   if(attempted){
+    try{
+     status('Originalwert zurueckschreiben: 0x49');
+     trial.restoreAck=await put49(trial.baseline,'restore');
+     await wait(180);
+     const restored=await readReg(0x16,0x49,2,gen,1300);
+     trial.finalReadback=restored.raw?.toLowerCase()||null;
+     trial.restored=trial.finalReadback===trial.baseline;
+    }catch(e){trial.errors.push('Wiederherstellung: '+String(e.message||e))}
+   }
+  }
+  let message;
+  if(!trial.restored){
+   message='ACHTUNG: Rueckstellung des Originalwerts NICHT bestaetigt! Aktuell '+String(trial.finalReadback)+', original '+trial.baseline+'. Bitte Einstellung in der offiziellen App kontrollieren.';
+  }else if(trial.temporaryConfirmed){
+   message='Einstellungs-Schreibzugriff NACHGEWIESEN: Testwert zurueckgelesen, Originalwert wiederhergestellt. Firmware-Flash-Berechtigung weiterhin unbekannt.';
+  }else{
+   message='Originalwert wiederhergestellt. Veraenderter Testwert NICHT bestaetigt; echter Schreibzugriff nicht nachgewiesen.';
+  }
+  trial.result=message;
+  $('activeProbeStatus').textContent=message;
+  status('0x49 Schreibtest beendet');
+  refreshReport('0x49 Schreibtest mit Rueckstellung dokumentiert');
+ }catch(e){
+  trial.errors.push(String(e.message||e));
+  $('activeProbeStatus').textContent='Test abgebrochen: '+String(e.message||e)+(attempted&&!trial.restored?' Original nicht bestaetigt!':'');
+  fail(e);refreshReport('Schreibtest unterbrochen');
+ }finally{busy=false;buttons()}
+}
+
 async function copyReport(){
  const content=$('reportOutput').value;if(!content)return;
  try{await navigator.clipboard.writeText(content);$('analysisState').textContent='Bericht kopiert! Jetzt hier in ChatGPT einfügen.'}
@@ -144,5 +215,5 @@ async function copyReport(){
 }
 
 function saveJson(){const data={...report,exportedAt:stamp(),safety:'READ only. No flash, no unlock, no credentials included.'},blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='ZT3-VCU-Trace-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
-$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
+$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('activeProbe').addEventListener('click',()=>void testSettingsWriteAndRestore());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;report.activeWriteProbe=null;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
 </script></body></html>
