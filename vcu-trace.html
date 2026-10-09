@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ZT3 Update-Labor · V15</title>
+<title>ZT3 Update-Labor · V16</title>
 <style>
 :root{color-scheme:dark;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}
 body{margin:0;background:radial-gradient(circle at 85% 0%,#1d3b62,#0b182b 42%,#09121d 100%);color:#eef6ff}
@@ -19,8 +19,8 @@ input[type=file]{font-size:12px;width:100%;padding:10px 0}
 footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 </style></head><body><main>
 <header><div class="eyebrow">Segway ZT3 Pro · Firmware Research</div>
-<div class="heading"><h1>ZT3 Firmware Lab</h1><span class="vbadge">V15 · NEU</span></div>
-<div class="updated">Zuletzt aktualisiert: 09.10.2026, 11:55 Uhr (Berlin) · Version 15</div>
+<div class="heading"><h1>ZT3 Firmware Lab</h1><span class="vbadge">V16 · NEU</span></div>
+<div class="updated">Zuletzt aktualisiert: 09.10.2026, 12:07 Uhr (Berlin) · Version 16</div>
 <p class="sub">Firmwarepaket, Prüfsummen und kompletten Update-Ablauf offline prüfen. Keine echten Flash-Befehle.</p></header>
 <section class="panel"><h2>Firmware untersuchen</h2>
 <p class="hint">Lädt das öffentliche VCU-ZIP, entschlüsselt die Datei und analysiert ARM-Code sowie interne Flash-Routinen.</p>
@@ -37,7 +37,7 @@ footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 <details><summary>Bluetooth-Verbindung</summary><button id="disconnect" class="secondary" disabled>Trennen</button><pre id="log" style="display:none"></pre></details>
 </section><section class="panel"><h2>3. Bericht für ChatGPT</h2>
 <p class="hint" id="reportState">Nach der Analyse erscheint hier nur noch ein kurzer Bericht statt hunderter Registerwerte.</p>
-<textarea id="reportOutput" readonly placeholder="V15-Bluetooth-Diagnosebericht …"></textarea></section>
+<textarea id="reportOutput" readonly placeholder="V16-Bluetooth-Diagnosebericht …"></textarea></section>
 <details><summary>Weitere Optionen (optional)</summary>
 <p class="hint">Falls der automatische Download scheitert, ZIP lokal auswählen:</p>
 <input id="fwZip" type="file" accept=".zip,application/zip" aria-label="VCU Firmware ZIP">
@@ -46,8 +46,9 @@ footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 <footer>Alle früheren Bluetooth- und Konfigurationstests sind bereits dokumentiert. Die alte <a href="index.html">ZT3 Control</a>-App bleibt bestehen. Diese Seite schreibt nichts auf den Roller. Interne Flash-Schlüssel sind keine Bluetooth-Freischaltschlüssel.</footer>
 </main><script>
 'use strict';
-const APP_BUILD_UTC='2026-10-09T09:55:55.418Z';
+const APP_BUILD_UTC='2026-10-09T10:07:28.162Z';
 const $=id=>document.getElementById(id),hex=b=>Array.from(b,v=>v.toString(16).padStart(2,'0')).join(''),stamp=()=>new Date().toISOString();
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const report={firmware:{vcu:null,region:null},firmwarePackage:null,device:null,auth:{L:false,M:false,O:false},transport:null,requests:[],responses:[],readings:[],events:[],errors:[],bleDiagnosis:{attempted:false,step:'Nicht gestartet',error:null,finished:false,readCount:0,values:{},startedAt:null}};
 function refreshReport(reason){$('reportOutput').value=JSON.stringify(firmwareCompactObject(),null,2);$('reportState').textContent=reason+' · Bluetooth-Fehler werden nun mitkopiert.';$('fwCopyAnalysis').disabled=false}
 
@@ -266,8 +267,8 @@ function firmwareCompactObject(){
  const p=report.firmwarePackage||{},st=p.staticBinary||{},fp=st.flashControllerFingerprint||{},sig=fp.signatures||[];
  const points=name=>{const hit=sig.find(x=>x.name===name);return hit?{count:hit.occurrences,offsets:hit.offsets}:null};
  return {
-  schema:'zt3-vcu-firmware-only-v15',
-  build:{version:'V15',publishedAt:APP_BUILD_UTC},
+  schema:'zt3-vcu-firmware-only-v16',
+  build:{version:'V16',publishedAt:APP_BUILD_UTC},
   generatedAt:stamp(),
   device:{model:'ZT3 Pro',vcu:report.firmware.vcu||null,region:report.firmware.region||null,liveBLE:!!server?.connected&&!!crypt?.O,speed46:report.firmware.speed46||null,speed48:report.firmware.speed48||null},bleDiagnosis:{...report.bleDiagnosis,authenticated:!!report.auth.O,latestEvents:report.events.slice(-12),latestErrors:report.errors.slice(-4)},
   firmware:{
