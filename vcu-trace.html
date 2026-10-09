@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ZT3 Firmware Lab · V11</title>
+<title>ZT3 Firmware Lab · V12</title>
 <style>
 :root{color-scheme:dark;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}
 body{margin:0;background:radial-gradient(circle at 85% 0%,#1d3b62,#0b182b 42%,#09121d 100%);color:#eef6ff}
@@ -19,8 +19,8 @@ input[type=file]{font-size:12px;width:100%;padding:10px 0}
 footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 </style></head><body><main>
 <header><div class="eyebrow">Segway ZT3 Pro · Firmware Research</div>
-<div class="heading"><h1>ZT3 Firmware Lab</h1><span class="vbadge">V11 · NEU</span></div>
-<div class="updated">Zuletzt aktualisiert: 09.10.2026, 09:47 Uhr (Berlin) · Version 11</div>
+<div class="heading"><h1>ZT3 Firmware Lab</h1><span class="vbadge">V12 · NEU</span></div>
+<div class="updated">Zuletzt aktualisiert: 09.10.2026, 09:53 Uhr (Berlin) · Version 12</div>
 <p class="sub">Firmware offline untersuchen, Ergebnis kopieren. Kein Roller-Scan und kein Flash-Vorgang.</p></header>
 <section class="panel"><h2>Firmware untersuchen</h2>
 <p class="hint">Lädt das öffentliche VCU-ZIP, entschlüsselt die Datei und analysiert ARM-Code sowie interne Flash-Routinen.</p>
@@ -33,7 +33,7 @@ footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 </section>
 <section class="panel"><h2>Bericht für ChatGPT</h2>
 <p class="hint" id="reportState">Nach der Analyse erscheint hier nur noch ein kurzer Bericht statt hunderter Registerwerte.</p>
-<textarea id="reportOutput" readonly placeholder="Kompakter V11-Bericht …"></textarea></section>
+<textarea id="reportOutput" readonly placeholder="Kompakter V12-Bericht …"></textarea></section>
 <details><summary>Weitere Optionen (optional)</summary>
 <p class="hint">Falls der automatische Download scheitert, ZIP lokal auswählen:</p>
 <input id="fwZip" type="file" accept=".zip,application/zip" aria-label="VCU Firmware ZIP">
@@ -42,7 +42,7 @@ footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 <footer>Alle früheren Bluetooth- und Konfigurationstests sind bereits dokumentiert. Die alte <a href="index.html">ZT3 Control</a>-App bleibt bestehen. Diese Seite schreibt nichts auf den Roller. Interne Flash-Schlüssel sind keine Bluetooth-Freischaltschlüssel.</footer>
 </main><script>
 'use strict';
-const APP_BUILD_UTC='2026-10-09T07:47:25.995Z';
+const APP_BUILD_UTC='2026-10-09T07:53:05.219Z';
 const $=id=>document.getElementById(id),hex=b=>Array.from(b,v=>v.toString(16).padStart(2,'0')).join(''),stamp=()=>new Date().toISOString();
 const report={firmware:{vcu:'1.5.8',region:'D'},firmwarePackage:null};
 function refreshReport(reason){$('reportOutput').value=JSON.stringify(firmwareCompactObject(),null,2);$('reportState').textContent=reason+' · Analysebericht bereit.'}
@@ -181,6 +181,22 @@ function inspectThumbLiteralMemoryReferences(plain){
  };
 }
 
+
+function analyzeThumbCalls(p){
+ const d=new DataView(p.buffer,p.byteOffset,p.byteLength),n=p.length, all=[],interesting=[];
+ for(let i=256;i+4<=n;i+=2){
+  const a=d.getUint16(i,true),b=d.getUint16(i+2,true);
+  if((a&0xf800)!==0xf000||(b&0xd000)!==0xd000)continue;
+  const S=(a>>10)&1,J1=(b>>13)&1,J2=(b>>11)&1,I1=(~(J1^S))&1,I2=(~(J2^S))&1;
+  const imm=(S<<24)|(I1<<23)|(I2<<22)|((a&1023)<<12)|((b&2047)<<1);
+  const target=i+4+((imm<<7)>>7);
+  if(target<0||target>=n||(target&1))continue;
+  const x={from:'0x'+i.toString(16).padStart(6,'0'),to:'0x'+target.toString(16).padStart(6,'0')};
+  all.push(x);if(target>=0xbd80&&target<=0xbef0)interesting.push(x);
+ }
+ return {schema:'zt3-bl-xrefs-v1',directBLCalls:all.length,flashHelperRangeCalls:interesting.slice(0,50),directUnlockRoutineCallers:all.filter(x=>x.to==='0x00bed0').map(x=>x.from),limitations:'Heuristic direct Thumb2 BL scan; not indirect calls or OTA authorisation.'};
+}
+
 function offlineArmFirmwareInfo(plain){
  const b=new Uint8Array(plain),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
  if(b.length<0x100)throw Error('Zu wenig Daten fuer eine ARM-Vektortabelle');
@@ -212,7 +228,7 @@ function offlineArmFirmwareInfo(plain){
  const terms=/firmware|bootloader|boot|update|flash|auth|unlock|sign|hash|encrypt|decrypt|tea|aes|checksum|crc|iap|vcu|segway|ninebot|zt3|at32|error|version|uart|swd|dfu/i;
  const important=allStrings.filter(x=>terms.test(x.text));
  return {
-  schema:'zt3-arm-cortexm-static-v4',
+  schema:'zt3-arm-cortexm-static-v5',
   flashBase:hexWord32(flashBase),assumedFlashImageEnd:hexWord32(flashEnd),
   imageBytes:b.length,
   initialStackPointer:hexWord32(sp),stackPointerInPlausibleSram:stackInRam,
@@ -222,6 +238,7 @@ function offlineArmFirmwareInfo(plain){
   thumbMemoryReferenceAnalysis:inspectThumbLiteralMemoryReferences(plain),
   flashControllerFingerprint:inspectArteryFlashCodeFingerprint(plain),
   internalFlashKeyRoutine:detectFlashUnlockSequence(plain),
+  flashCalls:analyzeThumbCalls(plain),
   vectors:entries,
   printableStringsFound:allStrings.length,
   firmwareRelevantStrings:important.slice(0,40),
@@ -233,8 +250,8 @@ function firmwareCompactObject(){
  const p=report.firmwarePackage||{},st=p.staticBinary||{},fp=st.flashControllerFingerprint||{},sig=fp.signatures||[];
  const points=name=>{const hit=sig.find(x=>x.name===name);return hit?{count:hit.occurrences,offsets:hit.offsets}:null};
  return {
-  schema:'zt3-vcu-firmware-only-v11',
-  build:{version:'V11',publishedAt:APP_BUILD_UTC},
+  schema:'zt3-vcu-firmware-only-v12',
+  build:{version:'V12',publishedAt:APP_BUILD_UTC},
   generatedAt:stamp(),
   device:{model:'ZT3 Pro',lastKnownVCU:'1.5.8',lastKnownRegion:'D'},
   firmware:{
@@ -245,6 +262,7 @@ function firmwareCompactObject(){
    armFirmwareDetected:!!st.likelyCortexMFirmware,
    flashPeripheral:points('FLASH_CTRL_BASE'),hardwareKey1:points('FLASH_KEY1'),hardwareKey2:points('FLASH_KEY2'),
    flashKeyRoutine:st.internalFlashKeyRoutine||null,
+   flashCalls:st.flashCalls||null,
    deviceFlashWriteAccess:'NOT TESTED',firmwareCompatibility:'NOT VERIFIED'
   },
   conclusion:'Offline inspection confirms internal flash programming code in a public firmware image, but no Bluetooth OTA unlock.'
@@ -428,7 +446,8 @@ async function analyzeFwFile(file,source){
   }
   report.firmwarePackage=result;
   const routine=result.staticBinary?.internalFlashKeyRoutine;
-  $('flashStatus').textContent=routine?.count?'Interne Flash-Schlüsselroutine erkannt bei '+routine.matches.map(x=>x.offset).join(', ')+'. Kein Bluetooth-Unlock nachgewiesen.':'Keine eindeutige Schlüsselsequenz gefunden; Bluetooth-Flashzugriff weiterhin unbekannt.';
+  const calls=result.staticBinary?.flashCalls;
+  $('flashStatus').textContent=routine?.count?'Interne Flash-Schlüsselroutine bei '+routine.matches.map(x=>x.offset).join(', ')+'. Direkte Aufrufe: '+(calls?.directUnlockRoutineCallers?.length??0)+'. Kein Bluetooth-Unlock nachgewiesen.':'Keine eindeutige Schlüsselsequenz gefunden; Bluetooth-Flashzugriff weiterhin unbekannt.';
   const manifestNote=result.manifestError?'Manifest nicht lesbar: '+result.manifestError:'Manifest gelesen';
   statusEl.textContent='ZIP: '+zip.entries.length+' Dateien. '+(result.encryptedFirmwarePresent?'Verschluesseltes Firmware-Abbild erkannt. ':'')+manifestNote+'. Vollstaendige Daten im kopierbaren Bericht. Keine VCU-Aenderung.';
   refreshReport('Firmware-ZIP offline analysiert');
