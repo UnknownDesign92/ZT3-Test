@@ -29,6 +29,8 @@
 <p id="fwAnalyzeStatus" class="note">Nicht analysiert. Kann auch ohne Bluetooth-Verbindung ausgefuehrt werden.</p>
 <p id="fwDecryptStatus" class="note">Standard-TEA/XTEA-Schluesseltest noch nicht erfolgt.</p>
 <button id="fwPlainSave" class="secondary" disabled>Entschluesselte VCU-Datei speichern (nur bei verifiziertem Pruefwert)</button>
+<button id="fwCopyAnalysis" class="secondary" disabled>Kompakte Firmware-Analyse kopieren</button>
+<p id="fwStaticStatus" class="note">ARM-Firmwareanalyse folgt nach erfolgreicher Entschluesselung.</p>
 </article>
 <article><h2>6. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
 <p class="note">Vorherigen ZT3-Registerscan oder VCU-Trace als JSON laden, um Unterschiede und fehlende Antworten zu erkennen.</p><input id="baseline" type="file" accept="application/json,.json"><p id="difference" class="note">Noch kein Vergleich geladen.</p>
@@ -113,7 +115,7 @@ function buildSummary(){
  const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
  const values={};for(const x of found){values[x.register]=x.reply.hex}
  const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v7',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
+ return {schema:'zt3-vcu-auto-analysis-v8',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
 }
 function refreshReport(reason){
  const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
@@ -219,6 +221,69 @@ async function testSettingsWriteAndRestore(){
 
 // Offline-only test of the publicly documented Ninebot TEA/XTEA standard key.
 // Independent of Bluetooth pairing; do not mistake a checksum for hardware compatibility.
+
+function hexWord32(num){return '0x'+num.toString(16).padStart(8,'0')}
+function offlineArmFirmwareInfo(plain){
+ const b=new Uint8Array(plain),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
+ if(b.length<0x100)throw Error('Zu wenig Daten fuer eine ARM-Vektortabelle');
+ const flashBase=0x08000000,flashEnd=flashBase+b.length;
+ const sp=dv.getUint32(0,true),reset=dv.getUint32(4,true);
+ const stackInRam=sp>=0x20000000&&sp<0x20100000&&(sp%4===0);
+ const resetThumb=(reset&1)===1;
+ const resetInImage=(reset&~1)>=flashBase&&(reset&~1)<flashEnd;
+ const names=['initial SP','Reset','NMI','HardFault','MemManage','BusFault','UsageFault','Reserved7','Reserved8','Reserved9','Reserved10','SVC','DebugMonitor','Reserved13','PendSV','SysTick'];
+ const entries=[];
+ let plausibleHandlers=0;
+ for(let i=0;i<Math.min(64,Math.floor(b.length/4));i++){
+  const address=dv.getUint32(i*4,true);
+  const inImage=(address&~1)>=flashBase&&(address&~1)<flashEnd;
+  if(i>0&&(address&1)===1&&inImage)plausibleHandlers++;
+  if(i<16)entries.push({index:i,name:names[i],address:hexWord32(address),thumb:i===0?null:!!(address&1),inImage:i===0?null:inImage});
+ }
+ const allStrings=[];
+ let start=-1;
+ for(let i=0;i<=b.length;i++){
+  const printable=i<b.length&&b[i]>=0x20&&b[i]<=0x7e;
+  if(printable){if(start<0)start=i;}
+  else if(start>=0){
+   const len=i-start;
+   if(len>=5&&len<=180)allStrings.push({offset:hexWord32(start),text:new TextDecoder('ascii').decode(b.slice(start,i))});
+   start=-1;
+  }
+ }
+ const terms=/firmware|bootloader|boot|update|flash|auth|unlock|sign|hash|encrypt|decrypt|tea|aes|checksum|crc|iap|vcu|segway|ninebot|zt3|at32|error|version|uart|swd|dfu/i;
+ const important=allStrings.filter(x=>terms.test(x.text));
+ return {
+  schema:'zt3-arm-cortexm-static-v1',
+  flashBase:hexWord32(flashBase),assumedFlashImageEnd:hexWord32(flashEnd),
+  imageBytes:b.length,
+  initialStackPointer:hexWord32(sp),stackPointerInPlausibleSram:stackInRam,
+  resetHandler:hexWord32(reset),resetHasThumbBit:resetThumb,resetPointsInsideImage:resetInImage,
+  likelyCortexMFirmware:stackInRam&&resetThumb&&resetInImage&&plausibleHandlers>=3,
+  plausibleExceptionAndIrqHandlers:plausibleHandlers,
+  vectors:entries,
+  printableStringsFound:allStrings.length,
+  firmwareRelevantStrings:important.slice(0,40),
+  otherStringsSample:allStrings.filter(x=>!terms.test(x.text)).slice(0,15),
+  limitations:'Only static inspection of public offline executable. Vector-table and string indicators do not prove match with installed VCU 1.5.8, bootloader protocol or OTA authorization. Flash address range is assumed, not measured.'
+ };
+}
+function firmwareCompactObject(){
+ const p=report.firmwarePackage||{};
+ return {
+  schema:'zt3-vcu-firmware-only-v8',createdAt:stamp(),
+  scooter:{model:'ZT3 Pro',installedVcu:report.firmware.vcu||'not read this session',region:report.firmware.region||'not read'},
+  package:{source:p.source,zipSha256:p.zipSha256,firmwareSha256:p.firmwareSha256,firmwareBytes:p.entries?.find(x=>x.name==='FIRM.bin.enc')?.bytes,manifest:p.manifest,decryptedWithPublicStandardKey:p.decryptedWithPublicStandardKey,decryptedVariant:p.decryptedVariant,standardKeyTests:p.standardKeyTests,staticBinary:p.staticBinary,compatibilityConfirmed:false,firmwareFlashPermissionTested:false},
+  conclusion:'Offline analysis only. No firmware flash and no proof of firmware-level write permission.'
+ };
+}
+async function copyFirmwareCompact(){
+ const message=JSON.stringify(firmwareCompactObject(),null,2);
+ try{await navigator.clipboard.writeText(message);$('fwStaticStatus').textContent+=' · Firmware-Bericht kopiert.'}
+ catch(e){const box=$('reportOutput');box.value=message;box.focus();box.select();$('fwStaticStatus').textContent+=' · Bericht ins Textfeld eingesetzt und markiert. Bitte manuell kopieren.'}
+}
+$('fwCopyAnalysis').addEventListener('click',()=>void copyFirmwareCompact());
+
 const TEA_PUBLIC_DEFAULT_KEY=Uint8Array.from([0xfe,0x80,0x1c,0xb2,0xd1,0xef,0x41,0xa6,0xa4,0x17,0x31,0xf5,0xa0,0x68,0x24,0xf0]);
 let offlinePlainFirmware=null;
 function teaKeyWords(b){
@@ -339,7 +404,7 @@ function safeFirmwareFields(obj){
 }
 async function analyzeFwFile(file,source){
  const statusEl=$('fwAnalyzeStatus');
- statusEl.textContent='Firmwaredatei wird lokal geprueft. Es wird nichts geflasht …';offlinePlainFirmware=null;$('fwPlainSave').disabled=true;$('fwDecryptStatus').textContent='Standardschluesseltest wird vorbereitet …';
+ statusEl.textContent='Firmwaredatei wird lokal geprueft. Es wird nichts geflasht …';offlinePlainFirmware=null;$('fwPlainSave').disabled=true;$('fwCopyAnalysis').disabled=true;$('fwCopyAnalysis').disabled=true;$('fwStaticStatus').textContent='ARM-Analyse wird vorbereitet …';$('fwDecryptStatus').textContent='Standardschluesseltest wird vorbereitet …';
  try{
   const buffer=await file.arrayBuffer();
   const zip=inspectZip(buffer);
@@ -371,6 +436,7 @@ async function analyzeFwFile(file,source){
        outcome.plainBytes=test.plain.length;
        outcome.plainSha256=await digestHex(test.plain);
        outcome.plainHeader32=hex(test.plain.slice(0,32));
+       result.staticBinary=offlineArmFirmwareInfo(test.plain);
        result.decryptedWithPublicStandardKey=true;
        result.decryptedVariant=variant;
        $('fwPlainSave').disabled=false;
@@ -380,6 +446,8 @@ async function analyzeFwFile(file,source){
     }
     result.standardKeyTests=checks;
     result.decryptedWithPublicStandardKey=!!result.decryptedWithPublicStandardKey;
+    $('fwStaticStatus').textContent=result.staticBinary?(result.staticBinary.likelyCortexMFirmware?'ARM-Cortex-M-Vektortabelle plausibel. ':'Vektortabelle nicht ausreichend plausibel. ')+'Reset '+result.staticBinary.resetHandler+'; '+result.staticBinary.plausibleExceptionAndIrqHandlers+' plausible Handler; '+result.staticBinary.firmwareRelevantStrings.length+' relevante Zeichenketten.':'Keine gueltige Entschluesselung mit den oeffentlichen Standardschluesseln.';
+    $('fwCopyAnalysis').disabled=false;
     $('fwDecryptStatus').textContent=result.decryptedWithPublicStandardKey?
        'Standard-Key '+result.decryptedVariant.toUpperCase()+' besteht die Firmware-Pruefsumme. Entschluesseltes Abbild offline verfuegbar; Eignung fuer deinen Roller NICHT bewiesen.':
        'Weder TEA noch XTEA mit dem oeffentlichen Standardschluessel bestehen die Firmware-Pruefsumme. Das ist KEIN Beweis fuer einen bestimmten Geraeteschluessel; kein Entschluesselungsversuch an der VCU.';
