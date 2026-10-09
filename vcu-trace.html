@@ -27,6 +27,8 @@
 <p class="note">Das ZIP wird nur im Browser untersucht: Dateiliste, info.json, Modulkennung, Verschluesselungsangaben und SHA-256. <strong>Es wird niemals an den Roller gesendet.</strong> Eine ZIP-Metadatenpruefung beweist weder Firmware-Kompatibilitaet noch eine Freischaltung.</p>
 <div class="row"><button id="fwAnalyze" class="secondary">Oeffentliches VCU-ZIP analysieren</button><input id="fwZip" type="file" accept=".zip,application/zip" aria-label="Eigenes Firmware-ZIP auswaehlen"></div>
 <p id="fwAnalyzeStatus" class="note">Nicht analysiert. Kann auch ohne Bluetooth-Verbindung ausgefuehrt werden.</p>
+<p id="fwDecryptStatus" class="note">Standard-TEA/XTEA-Schluesseltest noch nicht erfolgt.</p>
+<button id="fwPlainSave" class="secondary" disabled>Entschluesselte VCU-Datei speichern (nur bei verifiziertem Pruefwert)</button>
 </article>
 <article><h2>6. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
 <p class="note">Vorherigen ZT3-Registerscan oder VCU-Trace als JSON laden, um Unterschiede und fehlende Antworten zu erkennen.</p><input id="baseline" type="file" accept="application/json,.json"><p id="difference" class="note">Noch kein Vergleich geladen.</p>
@@ -111,7 +113,7 @@ function buildSummary(){
  const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
  const values={};for(const x of found){values[x.register]=x.reply.hex}
  const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v6',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
+ return {schema:'zt3-vcu-auto-analysis-v7',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
 }
 function refreshReport(reason){
  const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
@@ -214,6 +216,73 @@ async function testSettingsWriteAndRestore(){
 }
 
 
+
+// Offline-only test of the publicly documented Ninebot TEA/XTEA standard key.
+// Independent of Bluetooth pairing; do not mistake a checksum for hardware compatibility.
+const TEA_PUBLIC_DEFAULT_KEY=Uint8Array.from([0xfe,0x80,0x1c,0xb2,0xd1,0xef,0x41,0xa6,0xa4,0x17,0x31,0xf5,0xa0,0x68,0x24,0xf0]);
+let offlinePlainFirmware=null;
+function teaKeyWords(b){
+ const v=new DataView(b.buffer,b.byteOffset,b.byteLength);
+ return Array.from({length:4},(_,i)=>v.getUint32(i*4,true));
+}
+function ninebotTeaChecksum(data){
+ if(data.length%4!==0)throw Error('TEA checksum must be word aligned');
+ const v=new DataView(data.buffer,data.byteOffset,data.byteLength);
+ let sum=0;
+ for(let i=0;i<data.length;i+=4)sum=(sum+v.getUint32(i,true))>>>0;
+ return (((sum>>>16)|(sum<<16))^0xffffffff)>>>0;
+}
+function tryNinebotDecrypt(cipher,variant){
+ if(cipher.length<16||cipher.length%8!==0)throw Error('Encrypted image is not 8-byte aligned');
+ let keyBytes=TEA_PUBLIC_DEFAULT_KEY.slice(),key=teaKeyWords(keyBytes),ivLo=0,ivHi=0;
+ const output=new Uint8Array(cipher.length);
+ const vin=new DataView(cipher.buffer,cipher.byteOffset,cipher.byteLength);
+ const vout=new DataView(output.buffer);
+ const DELTA=0x9e3779b9;
+ for(let offset=0;offset<cipher.length;offset+=8){
+  if(offset>0&&offset%1024===0){
+   keyBytes=Uint8Array.from(keyBytes,(b,i)=>(b+i)&0xff);
+   key=teaKeyWords(keyBytes);
+  }
+  const encryptedLo=vin.getUint32(offset,true),encryptedHi=vin.getUint32(offset+4,true);
+  let y=encryptedLo,z=encryptedHi;
+  if(variant==='xtea'){
+   let sum=Math.imul(DELTA,32)>>>0;
+   for(let i=0;i<32;i++){
+    const mixZ=((((y<<4)^(y>>>5))+y)>>>0)^((sum+key[(sum>>>11)&3])>>>0);
+    z=(z-mixZ)>>>0;
+    sum=(sum-DELTA)>>>0;
+    const mixY=((((z<<4)^(z>>>5))+z)>>>0)^((sum+key[sum&3])>>>0);
+    y=(y-mixY)>>>0;
+   }
+  }else{
+   let sum=Math.imul(DELTA,32)>>>0;
+   for(let i=0;i<32;i++){
+    const mixZ=((((y<<4)+key[2])>>>0)^((y+sum)>>>0)^(((y>>>5)+key[3])>>>0))>>>0;
+    z=(z-mixZ)>>>0;
+    const mixY=((((z<<4)+key[0])>>>0)^((z+sum)>>>0)^(((z>>>5)+key[1])>>>0))>>>0;
+    y=(y-mixY)>>>0;
+    sum=(sum-DELTA)>>>0;
+   }
+  }
+  vout.setUint32(offset,(y^ivLo)>>>0,true);
+  vout.setUint32(offset+4,(z^ivHi)>>>0,true);
+  ivLo=encryptedLo;ivHi=encryptedHi;
+ }
+ const supplied=new DataView(output.buffer).getUint32(output.length-4,true);
+ const calculated=ninebotTeaChecksum(output.slice(0,-4));
+ return {variant,checksumValid:supplied===calculated,plain:supplied===calculated?output.slice(0,-4):null};
+}
+function saveOfflinePlain(){
+ if(!offlinePlainFirmware)return;
+ const blob=new Blob([offlinePlainFirmware],{type:'application/octet-stream'});
+ const url=URL.createObjectURL(blob),a=document.createElement('a');
+ a.href=url;a.download='ZT3-VCU-offline-decrypted-unverified-hardware.bin';
+ document.body.appendChild(a);a.click();a.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+$('fwPlainSave').addEventListener('click',saveOfflinePlain);
+
 const ZT3_PUBLIC_VCU_URL='https://raw.githubusercontent.com/HeckerHeckt/Ninebot-Tuning-Files/main/ZT3%2050kmh%20VCU.zip';
 function le16(d,i){return d.getUint16(i,true)}
 function le32(d,i){return d.getUint32(i,true)}
@@ -270,7 +339,7 @@ function safeFirmwareFields(obj){
 }
 async function analyzeFwFile(file,source){
  const statusEl=$('fwAnalyzeStatus');
- statusEl.textContent='Firmwaredatei wird lokal geprueft. Es wird nichts geflasht …';
+ statusEl.textContent='Firmwaredatei wird lokal geprueft. Es wird nichts geflasht …';offlinePlainFirmware=null;$('fwPlainSave').disabled=true;$('fwDecryptStatus').textContent='Standardschluesseltest wird vorbereitet …';
  try{
   const buffer=await file.arrayBuffer();
   const zip=inspectZip(buffer);
@@ -290,6 +359,30 @@ async function analyzeFwFile(file,source){
     const data=await extractZipEntry(zip,fw);
     result.firmwareSha256=await digestHex(data);
     result.firmwareHeader16=hex(data.slice(0,16));
+    offlinePlainFirmware=null;
+    $('fwPlainSave').disabled=true;
+    const checks=[];
+    for(const variant of ['tea','xtea']){
+     try{
+      const test=tryNinebotDecrypt(data,variant);
+      const outcome={variant,publicStandardKeyChecksumValid:test.checksumValid};
+      if(test.checksumValid&&test.plain){
+       offlinePlainFirmware=test.plain;
+       outcome.plainBytes=test.plain.length;
+       outcome.plainSha256=await digestHex(test.plain);
+       outcome.plainHeader32=hex(test.plain.slice(0,32));
+       result.decryptedWithPublicStandardKey=true;
+       result.decryptedVariant=variant;
+       $('fwPlainSave').disabled=false;
+      }
+      checks.push(outcome);
+     }catch(e){checks.push({variant,error:String(e?.message||e)})}
+    }
+    result.standardKeyTests=checks;
+    result.decryptedWithPublicStandardKey=!!result.decryptedWithPublicStandardKey;
+    $('fwDecryptStatus').textContent=result.decryptedWithPublicStandardKey?
+       'Standard-Key '+result.decryptedVariant.toUpperCase()+' besteht die Firmware-Pruefsumme. Entschluesseltes Abbild offline verfuegbar; Eignung fuer deinen Roller NICHT bewiesen.':
+       'Weder TEA noch XTEA mit dem oeffentlichen Standardschluessel bestehen die Firmware-Pruefsumme. Das ist KEIN Beweis fuer einen bestimmten Geraeteschluessel; kein Entschluesselungsversuch an der VCU.';
    }catch(e){result.binaryInspectionError=String(e?.message||e)}
   }
   report.firmwarePackage=result;
@@ -309,7 +402,7 @@ async function fetchFirmwareZip(){
   if(buffer.byteLength>2000000)throw Error('Datei groesser als 2 MB');
   const f=new File([buffer],'ZT3-public-VCU.zip',{type:'application/zip'});
   await analyzeFwFile(f,'public GitHub firmware ZIP');
- }catch(e){const msg=String(e?.message||e);$('fwAnalyzeStatus').textContent='Download/Analyse blockiert: '+msg+'. Alternativ ZIP-Datei rechts auswaehlen.';report.firmwarePackage={source:'public URL',error:msg};refreshReport('Firmwarepaket konnte nicht geladen werden')}
+ }catch(e){const msg=String(e?.message||e);$('fwAnalyzeStatus').textContent='Download/Analyse blockiert: '+msg+'. Alternativ ZIP-Datei rechts auswaehlen.';report.firmwarePackage={source:'public URL',error:msg};offlinePlainFirmware=null;$('fwPlainSave').disabled=true;refreshReport('Firmwarepaket konnte nicht geladen werden')}
  finally{el.disabled=false}
 }
 $('fwAnalyze').addEventListener('click',()=>void fetchFirmwareZip());
@@ -322,5 +415,5 @@ async function copyReport(){
 }
 
 function saveJson(){const data={...report,exportedAt:stamp(),safety:'READ only. No flash, no unlock, no credentials included.'},blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='ZT3-VCU-Trace-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
-$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('activeProbe').addEventListener('click',()=>void testSettingsWriteAndRestore());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;report.activeWriteProbe=null;report.firmwarePackage=null;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
+$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('activeProbe').addEventListener('click',()=>void testSettingsWriteAndRestore());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;report.activeWriteProbe=null;report.firmwarePackage=null;offlinePlainFirmware=null;$('fwPlainSave').disabled=true;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
 </script></body></html>
