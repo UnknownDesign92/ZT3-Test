@@ -1,227 +1,69 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ZT3 VCU Auto-Analyse</title>
+<title>ZT3 Firmware Lab · V11</title>
 <style>
-:root{color-scheme:dark;font:15px system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}body{margin:0;background:#081423;color:#e3ecf9}main{max-width:850px;margin:auto;padding:20px 13px 65px}h1{font-size:27px;margin-bottom:4px}h2{font-size:18px;margin:0 0 12px}.sub,.note{color:#b3c9e4;font-size:13px;line-height:1.5}article{background:#12243b;border:1px solid #324f71;border-radius:18px;padding:18px;margin:13px 0}button{font:inherit;color:white;background:#176fa3;border:1px solid #63aed8;padding:12px 14px;border-radius:11px;cursor:pointer;font-weight:700}button:disabled{opacity:.45;cursor:default}button.secondary{background:#253b54;border-color:#496684}button.stop{background:#762e31;border-color:#b05b60}.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 145px}strong{color:#c5e8ff}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px;background:#06101d;border-radius:10px;padding:12px;max-height:330px;overflow:auto;line-height:1.55}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{border-bottom:1px solid #31506c;padding:8px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}textarea{display:block;min-height:225px;width:100%;background:#06101d;color:#ebf6ff;border:1px solid #5279a0;border-radius:10px;padding:10px;font-size:12px;line-height:1.5;resize:vertical}input[type=file]{font-size:12px;max-width:100%}progress{width:100%;height:16px}code{color:#8de7ef}a{color:#9ad9ff}.ok{color:#8ee6bf}.warn{color:#ffd5a4}
+:root{color-scheme:dark;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 85% 0%,#1d3b62,#0b182b 42%,#09121d 100%);color:#eef6ff}
+main{max-width:740px;margin:auto;padding:22px 14px 50px}
+.eyebrow{color:#85cbff;font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:800}
+h1{font-size:clamp(26px,6vw,34px);line-height:1.18;margin:7px 0}h2{font-size:18px;margin:0 0 12px}
+.heading{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.vbadge{background:#236da8;border:1px solid #71c4fb;color:white;border-radius:999px;font-size:13px;font-weight:800;padding:6px 13px}
+.sub,.hint{font-size:13px;color:#b1c9e2}.updated{font-size:12px;color:#8ed1ff;font-weight:700;padding:5px 0}
+.panel{border:1px solid #365677;border-radius:17px;background:#14283f;padding:18px;margin:15px 0}
+button{display:block;width:100%;font:inherit;cursor:pointer;background:#268bd1;color:#fff;padding:13px;border-radius:11px;border:1px solid #75bded;margin:10px 0;font-weight:750}
+button.secondary{background:#203b58;border-color:#6087a9}button:disabled{opacity:.45;cursor:not-allowed}
+.status{border-radius:10px;background:#0b1a2b;border:1px solid #385a79;padding:11px 12px;margin:8px 0;font-size:13px;color:#c4d9eb;overflow-wrap:anywhere}
+textarea{width:100%;height:175px;resize:vertical;background:#091829;color:#ebf6fe;border:1px solid #3f6588;border-radius:10px;padding:12px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+details{border:1px solid #314962;border-radius:11px;padding:12px;margin:15px 0}summary{cursor:pointer;font-size:13px;color:#bbe5ff;font-weight:700}
+input[type=file]{font-size:12px;width:100%;padding:10px 0}
+footer{font-size:12px;color:#9ab4cf}a{color:#a3dfff}
 </style></head><body><main>
-<h1>ZT3 VCU Auto-Analyse</h1><p class="sub">Roller verbinden → automatische VCU-Diagnose → Ergebnis kopieren. Bluetooth, Anmeldung, 256 Register und Antwortverhalten werden geprüft. Es werden keine Einstellungen verändert.</p>
-<article><h2>1. Bluetooth-Sitzung</h2><p id="status" role="status">Roller einschalten und Segway-App schließen. In Bluefy öffnen.</p>
-<div class="row"><button id="connect">Verbinden &amp; automatisch prüfen</button><button class="secondary" id="disconnect" disabled>Trennen</button></div>
-<p class="note">Bei einer neuen Kopplung einmal die POWER-Taste am Roller drücken, sobald die Aufforderung erscheint. Der bereits in ZT3 Control gespeicherte Sitzungsschlüssel wird, soweit vorhanden, wiederverwendet.</p>
-<table><tbody><tr><th>Anmeldung</th><td id="authState">nicht verbunden</td></tr><tr><th>VCU-Version</th><td id="vcuVersion">–</td></tr><tr><th>Region</th><td id="region">–</td></tr><tr><th>Firmware-Pfad</th><td>keine IAP-/OTA-Befehle</td></tr></tbody></table></article>
-<article><h2>2. Register und Antwortverhalten</h2>
-<div class="row"><button id="quick" disabled>Schnellscan VCU</button><button id="full" class="secondary" disabled>Alle 256 VCU-Register</button><button id="delta" class="secondary" disabled>Vorher/Nachher vergleichen</button><button id="stop" class="stop" disabled>Stoppen</button></div>
-<progress id="progress" value="0" max="1"></progress><p id="counter" class="note">Kein Scan gestartet.</p>
-<p class="note">Scan-Kommandos sind ausschließlich <code>READ 0x01</code>. Der Test sendet weder Geschwindigkeitsänderungen noch <code>IAP_BEGIN 0x07</code>, Firmwarepakete, Unlock-Versuche oder Bootloader-Befehle.</p>
-<p id="deltaHint" class="note">Nach dem ersten Vollscan wird automatisch eine Referenz gespeichert. Verändere danach am stehenden Roller eine Einstellung über seine normalen Tasten (z. B. Licht), und drücke „Vorher/Nachher vergleichen“.</p><div id="stats">Noch keine Antworten.</div></article>
-<article><h2>3. Schreibpfad diagnostizieren (freiwillig)</h2>
-<p class="note">Dieser Test schreibt nur den zuvor gelesenen, <strong>identischen</strong> Auto-Abschaltzeit-Wert auf VCU-Register <code>0x49</code> zurueck. Keine Geschwindigkeitsaenderung, kein Firmware-Update. Nur am stehenden Roller. Auch eine Antwort beweist <strong>keine</strong> Flash-Freigabe.</p>
-<button id="writeProbe" class="secondary" disabled>VCU WRITE-Antwort pruefen</button>
-<p id="writeProbeStatus" class="note">Nicht geprueft. Kein Schreibvorgang im automatischen Scan.</p></article>
-<article><h2>4. Tatsächlichen Einstellungs-Schreibzugriff testen (optional)</h2>
-<p class="note">Einmaliger kontrollierter Test am stehenden Roller: Auto-Abschaltzeit in Register <code>0x49</code> von ihrem aktuellen Wert um <strong>eine Minute</strong> erhöhen, Wert zurücklesen und den Originalwert sofort wiederherstellen. Nur bei gültigem Originalwert zwischen 1 und 59 Minuten. Dies ist kein Firmware-Test und betrifft keine Geschwindigkeits- oder Schutzparameter.</p>
-<button id="activeProbe" class="secondary" disabled>Änderung testen + automatisch zurücksetzen</button>
-<p id="activeProbeStatus" class="note">Noch nicht durchgeführt. Dieser Test startet niemals automatisch.</p>
-</article>
-<article><h2>5. VCU-Firmwarepaket technisch analysieren (ohne Flash)</h2>
-<p class="note">Das ZIP wird nur im Browser untersucht: Dateiliste, info.json, Modulkennung, Verschluesselungsangaben und SHA-256. <strong>Es wird niemals an den Roller gesendet.</strong> Eine ZIP-Metadatenpruefung beweist weder Firmware-Kompatibilitaet noch eine Freischaltung.</p>
-<div class="row"><button id="fwAnalyze" class="secondary">Oeffentliches VCU-ZIP analysieren</button><input id="fwZip" type="file" accept=".zip,application/zip" aria-label="Eigenes Firmware-ZIP auswaehlen"></div>
-<p id="fwAnalyzeStatus" class="note">Nicht analysiert. Kann auch ohne Bluetooth-Verbindung ausgefuehrt werden.</p>
-<p id="fwDecryptStatus" class="note">Standard-TEA/XTEA-Schluesseltest noch nicht erfolgt.</p>
-<button id="fwPlainSave" class="secondary" disabled>Entschluesselte VCU-Datei speichern (nur bei verifiziertem Pruefwert)</button>
-<button id="fwCopyAnalysis" class="secondary" disabled>Kompakte Firmware-Analyse kopieren</button>
-<p id="fwStaticStatus" class="note">ARM-Firmwareanalyse folgt nach erfolgreicher Entschluesselung.</p>
-</article>
-<article><h2>6. Fertiger Analysebericht für ChatGPT</h2><p id="analysisState" class="note">Noch keine Auswertung. Nach dem Verbinden läuft der Scan automatisch und erstellt einen kopierbaren Bericht.</p><button id="copyReport" disabled>Gesamten Bericht kopieren</button><textarea id="reportOutput" readonly placeholder="Hier erscheint automatisch der fertige Bericht, den du mir senden kannst."></textarea><p class="note">Falls Kopieren blockiert wird: in das Textfeld tippen, alles markieren und kopieren.</p><h2>Zusätzliche Details / Vergleich</h2><div class="row"><button id="export" class="secondary">Vollständiges Diagnose-JSON herunterladen</button><button id="clear" class="secondary">Protokoll leeren</button></div>
-<p class="note">Vorherigen ZT3-Registerscan oder VCU-Trace als JSON laden, um Unterschiede und fehlende Antworten zu erkennen.</p><input id="baseline" type="file" accept="application/json,.json"><p id="difference" class="note">Noch kein Vergleich geladen.</p>
-<pre id="log">Bereit.</pre></article>
-<article><h2>Einordnung</h2><p class="note">Ein fehlendes READ-Ergebnis ist kein eindeutiger Sperrbeweis. Ein ACK bestätigt für sich allein auch keinen freigegebenen Firmware-Flash. Der Vergleich zeigt reproduzierbare Geräteantworten und ist eine Grundlage für weitere Protokollanalyse, kein Umgehungswerkzeug. GATT-Schlüssel, Sitzungstoken, Challenge und die vollständige Seriennummer werden nicht exportiert.</p></article>
+<header><div class="eyebrow">Segway ZT3 Pro · Firmware Research</div>
+<div class="heading"><h1>ZT3 Firmware Lab</h1><span class="vbadge">V11 · NEU</span></div>
+<div class="updated">Zuletzt aktualisiert: 09.10.2026, 09:47 Uhr (Berlin) · Version 11</div>
+<p class="sub">Firmware offline untersuchen, Ergebnis kopieren. Kein Roller-Scan und kein Flash-Vorgang.</p></header>
+<section class="panel"><h2>Firmware untersuchen</h2>
+<p class="hint">Lädt das öffentliche VCU-ZIP, entschlüsselt die Datei und analysiert ARM-Code sowie interne Flash-Routinen.</p>
+<button id="fwAnalyze">1. Firmware analysieren</button>
+<button class="secondary" id="fwCopyAnalysis" disabled>2. Kurzen Bericht kopieren</button>
+<div class="status" id="fwAnalyzeStatus" aria-live="polite">Bereit für die Firmwareanalyse.</div>
+<div class="status" id="fwDecryptStatus">Entschlüsselung: noch nicht geprüft.</div>
+<div class="status" id="fwStaticStatus">ARM-Code: noch nicht geprüft.</div>
+<div class="status" id="flashStatus">Flash-Schlüsselroutine: noch nicht geprüft.</div>
+</section>
+<section class="panel"><h2>Bericht für ChatGPT</h2>
+<p class="hint" id="reportState">Nach der Analyse erscheint hier nur noch ein kurzer Bericht statt hunderter Registerwerte.</p>
+<textarea id="reportOutput" readonly placeholder="Kompakter V11-Bericht …"></textarea></section>
+<details><summary>Weitere Optionen (optional)</summary>
+<p class="hint">Falls der automatische Download scheitert, ZIP lokal auswählen:</p>
+<input id="fwZip" type="file" accept=".zip,application/zip" aria-label="VCU Firmware ZIP">
+<button class="secondary" id="fwPlainSave" disabled>Entschlüsseltes Abbild lokal speichern</button>
+</details>
+<footer>Alle früheren Bluetooth- und Konfigurationstests sind bereits dokumentiert. Die alte <a href="index.html">ZT3 Control</a>-App bleibt bestehen. Diese Seite schreibt nichts auf den Roller. Interne Flash-Schlüssel sind keine Bluetooth-Freischaltschlüssel.</footer>
 </main><script>
 'use strict';
-const SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e',TX='6e400002-b5a3-f393-e0a9-e50e24dcca9e',RX='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-const $=id=>document.getElementById(id),hex=b=>Array.from(b,v=>v.toString(16).padStart(2,'0')).join(''),wait=ms=>new Promise(r=>setTimeout(r,ms));
-const salt=Uint8Array.from([0x97,0xcf,0xb8,2,0x84,0x41,0x43,0xde,0x56,0,0x2b,0x3b,0x34,0x78,0x0a,0x5d]);
-const te=new TextEncoder();
-let device=null,server=null,writeChar=null,notifyChar=null,crypt=null,packetQueue=[],pumping=false,frames=[],sequence=0,generation=0,busy=false,scanning=false,cancel=false,baseline=null,snapshotA=null;
-const report={schema:'zt3-vcu-passive-readonly-trace-v1',createdAt:new Date().toISOString(),device:null,auth:{L:false,M:false,O:false},firmware:{},requests:[],responses:[],readings:[],events:[],errors:[],transport:null,comparison:null};
-function stamp(){return new Date().toISOString()}
-function log(msg){report.events.push({at:stamp(),message:msg});if(report.events.length>300)report.events.shift();$('log').textContent=report.events.slice(-75).map(x=>x.at.slice(11,19)+' '+x.message).join('\n');$('log').scrollTop=$('log').scrollHeight}
-function status(s){$('status').textContent=s;log(s)}
-function fail(e){let msg=String(e?.message||e);report.errors.push({at:stamp(),error:msg});status('Fehler: '+msg)}
-function buttons(){const auth=!!server?.connected&&!!crypt?.O;$('connect').disabled=busy;$('disconnect').disabled=busy||!server?.connected;$('quick').disabled=busy||!auth;$('full').disabled=busy||!auth;$('delta').disabled=busy||!auth||!snapshotA;$('writeProbe').disabled=busy||!auth;$('activeProbe').disabled=busy||!auth;$('stop').disabled=!scanning;$('authState').textContent=auth?'Bluetooth + Ninebot-Sitzung bestätigt':server?.connected?'Bluetooth verbunden; Authentifizierung läuft':'nicht verbunden';$('copyReport').disabled=!$('reportOutput').value}
-const xor=(a,b)=>Uint8Array.from(a,(v,i)=>v^b[i]);
-async function aesBlock(key,block){const k=await crypto.subtle.importKey('raw',key,{name:'AES-CBC'},false,['encrypt']);const v=new Uint8Array(await crypto.subtle.encrypt({name:'AES-CBC',iv:new Uint8Array(16)},k,block));return v.slice(0,16)}
-async function sha1(v){return new Uint8Array(await crypto.subtle.digest('SHA-1',v))}
-class NinebotCrypto{
- constructor(name){this.name=te.encode(name);this.token=new Uint8Array(16);this.random=new Uint8Array(16);this.challenge=new Uint8Array(14);this.key=new Uint8Array(16);this.counter=0;this.L=false;this.M=false;this.O=false}
- async derive(a,b){const v=new Uint8Array(32);v.set(a.slice(0,16));v.set(b.slice(0,16),16);this.key=(await sha1(v)).slice(0,16)}
- async init(){await this.derive(this.name,salt)}
- async f(data){const ks=await aesBlock(this.key,salt),o=new Uint8Array(data.length);for(let i=0;i<data.length;i++)o[i]=data[i]^ks[i%16];return o}
- async ctr(data,c){const o=new Uint8Array(data.length),v=new Uint8Array(16);v[0]=1;v[1]=(c>>>24)&255;v[2]=(c>>>16)&255;v[3]=(c>>>8)&255;v[4]=c&255;v.set(this.token.slice(0,8),5);for(let i=0;i<data.length;i+=16){v[15]=((i/16)+1)&255;const ks=await aesBlock(this.key,v);for(let j=0;j<Math.min(16,data.length-i);j++)o[i+j]=data[i+j]^ks[j]}return o}
- async tag(data,c){const len=data.length-3,b0=new Uint8Array(16);b0[0]=0x59;b0[1]=(c>>>24)&255;b0[2]=(c>>>16)&255;b0[3]=(c>>>8)&255;b0[4]=c&255;b0.set(this.token.slice(0,8),5);b0[15]=len&255;let x=await aesBlock(this.key,b0);const first=new Uint8Array(16);first.set(data.slice(0,3));x=await aesBlock(this.key,xor(first,x));for(let i=3;i<data.length;i+=16){const block=new Uint8Array(16);block.set(data.slice(i,i+16));x=await aesBlock(this.key,xor(block,x))}const s=new Uint8Array(16);s[0]=1;s.set(b0.slice(1,13),1);const enc=await aesBlock(this.key,s);return xor(enc.slice(0,4),x.slice(0,4))}
- async encrypt(data){const len=data.length,out=new Uint8Array(len+6);out.set(data.slice(0,3));const body=data.slice(3);if(this.counter===0){const obf=await this.f(body);out.set(obf,3);let sum=0;for(const v of body)sum+=v<128?v:v-256;let inv=(~sum)&65535;out[len+2]=inv&255;out[len+3]=inv>>8;this.counter=1}else{const c=++this.counter;out.set(await this.ctr(body,c),3);out.set(await this.tag(data,c),len);out[len+4]=(c>>>8)&255;out[len+5]=c&255;if(data.length>=23&&data[2]===16&&data[3]===0x3e&&data[5]===0x5c)this.random.set(data.slice(7,23))}return out}
- async decrypt(data){if(data.length<9||data[0]!==0x5a||data[1]!==0xa5)return null;const ctr=(data[data.length-2]<<8)|data[data.length-1],eff=(this.counter&~65535)+ctr;const body=data.slice(3,data.length-6),plain=eff===0?await this.f(body):await this.ctr(body,eff);const out=new Uint8Array(plain.length+3);out.set(data.slice(0,3));out.set(plain,3);if(eff===0&&out.length>=37&&out[2]===30&&out[4]===0x3e&&out[5]===0x5b){this.token.set(out.slice(7,23));this.challenge.set(out.slice(23,37));await this.derive(this.name,this.token);this.L=true}if(eff>0&&out.length>=7&&out[4]===0x3e&&out[5]===0x5c&&(out[6]===0||out[6]===1)){await this.derive(this.random,this.token);this.M=true}if(eff>0&&out.length>=7&&out[4]===0x3e&&out[5]===0x5d&&out[6]===1){this.O=true;this.M=true}this.counter=eff+1;return out}
- async resume(random){this.random.set(random);await this.derive(this.random,this.token);this.M=true}
- async frame(dst,cmd,arg,payload=[]){const b=Uint8Array.from([0x5a,0xa5,payload.length,0x3e,dst,cmd,arg,...payload]);return this.encrypt(b)}
-}
-function parse(p){if(!p||p.length<7||p[0]!==0x5a||p[1]!==0xa5||p.length!==p[2]+7)return null;return{src:p[3],dst:p[4],cmd:p[5],arg:p[6],payload:hex(p.slice(7,7+p[2]))}}
-function formatByte(n){return '0x'+n.toString(16).padStart(2,'0')}
-function recordReply(frame){if(!crypt?.O||[0x5b,0x5c,0x5d].includes(frame.cmd))return;const rec={at:stamp(),seq:sequence,src:formatByte(frame.src),dst:formatByte(frame.dst),cmd:formatByte(frame.cmd),arg:formatByte(frame.arg),payload:frame.arg===0x10?'[serial redacted]':frame.payload};report.responses.push(rec);if(report.responses.length>1300)report.responses.shift();if(frame.cmd!==4)log('VCU-RX ungewöhnliches Kommando '+rec.cmd+' register '+rec.arg+' payload '+rec.payload)}
-async function pump(){if(pumping)return;pumping=true;try{while(packetQueue.length){const raw=packetQueue.shift();if(!crypt)continue;const plain=await crypt.decrypt(raw),f=parse(plain);if(!f){if(crypt.O)log('Undekodierbare Antwort; Paketlänge '+raw.length);continue}f.seq=++sequence;frames.push(f);if(frames.length>90)frames.shift();report.auth={L:crypt.L,M:crypt.M,O:crypt.O};recordReply(f)}}catch(e){fail(e)}finally{pumping=false;if(packetQueue.length)void pump()}}
-function onNotify(e){const v=e.target.value;if(!v)return;packetQueue.push(new Uint8Array(v.buffer.slice(v.byteOffset,v.byteOffset+v.byteLength)));void pump()}
-function connected(gen){if(gen!==generation||!server?.connected)throw Error('Verbindung unterbrochen')}
-async function poll(fn,time,gen){const end=Date.now()+time;while(Date.now()<end){connected(gen);if(fn())return true;await wait(35)}return !!fn()}
-async function send(bytes){if(!writeChar||!server?.connected)throw Error('Bluetooth getrennt');await writeChar.writeValueWithoutResponse(bytes)}
-function pairKey(){return 'zt3-v7-pair-'+(device?.id||device?.name)}
-function savedRandom(){try{if(localStorage.getItem('zt3-v11-stale-'+(device?.id||device?.name))==='1')return null;const h=localStorage.getItem(pairKey());return /^[a-f0-9]{32}$/i.test(h||'')?Uint8Array.from(h.match(/../g),x=>parseInt(x,16)):null}catch(_){return null}}
-function storeRandom(r){try{localStorage.setItem(pairKey(),hex(r));localStorage.removeItem('zt3-v11-stale-'+(device?.id||device?.name))}catch(_){log('Sitzungsschlüssel nicht im Browser gespeichert')}}
-function onDisconnect(){cancel=true;generation++;server=null;crypt=null;writeChar=null;notifyChar=null;scanning=false;status('Bluetooth getrennt');buttons()}
-async function openGatt(){server=await device.gatt.connect();const svc=await server.getPrimaryService(SVC);writeChar=await svc.getCharacteristic(TX);notifyChar=await svc.getCharacteristic(RX);await notifyChar.startNotifications();notifyChar.addEventListener('characteristicvaluechanged',onNotify);report.transport={service:SVC,writeProperties:{write:writeChar.properties.write,writeWithoutResponse:writeChar.properties.writeWithoutResponse},notifyProperties:{notify:notifyChar.properties.notify,indicate:notifyChar.properties.indicate}};frames=[];packetQueue=[];crypt=new NinebotCrypto(device.name);await crypt.init()}
-async function handshake(useSaved){const gen=generation;crypt=new NinebotCrypto(device.name);await crypt.init();frames=[];packetQueue=[];status('Schritt 1/3 – Sitzungstoken lesen');for(let i=0;i<4&&!crypt.L;i++){connected(gen);await send(await crypt.frame(4,0x5b,0));await poll(()=>crypt.L,900,gen)}if(!crypt.L)throw Error('Handshake Stufe 1 nicht bestätigt');let random=useSaved;if(random){await crypt.resume(random);log('Lokal gespeicherter Sitzungsschlüssel geladen')}else{random=crypto.getRandomValues(new Uint8Array(16));status('Schritt 2/3 – einmal POWER am Roller drücken');for(let i=0;i<6&&!crypt.M;i++){connected(gen);await send(await crypt.frame(4,0x5c,0,random));await poll(()=>crypt.M,900,gen)}if(!crypt.M)throw Error('Neue Kopplung wurde nicht bestätigt')}status('Schritt 3/3 – Anmeldung bestätigen');for(let i=0;i<4&&!crypt.O;i++){connected(gen);await send(await crypt.frame(4,0x5d,0,crypt.challenge));await poll(()=>crypt.O,950,gen)}if(!crypt.O)throw Error('Stufe 3 nicht bestätigt');storeRandom(random);report.auth={L:true,M:true,O:true};status('Bluetooth und Anmeldung erfolgreich');buttons()}
-async function connectScooter(){if(busy)return;let ready=false;busy=true;buttons();try{if(!navigator.bluetooth?.requestDevice)throw Error('Web Bluetooth fehlt: Seite bitte im Bluefy-Browser öffnen');status('Roller im Bluetooth-Dialog auswählen');device=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[SVC]});if(!device.name||!/^1K1[A-Z0-9]{11}$/.test(device.name))throw Error('Kein ZT3 mit Kennung 1K1… ausgewählt');device.addEventListener('gattserverdisconnected',onDisconnect);report.device={model:'Segway ZT3 Pro',namePrefix:device.name.slice(0,4)};status('GATT-Verbindung herstellen');await openGatt();let cached=savedRandom();try{await handshake(cached)}catch(e){if(cached&&String(e?.message||e).includes('Stufe 3')){log('Alter Kopplungsschlüssel ungültig; neue Kopplung wird versucht');try{device.gatt.disconnect()}catch(_){}await wait(600);await openGatt();await handshake(null)}else throw e}await loadBasic();ready=true}catch(e){fail(e)}finally{busy=false;buttons();if(ready){$('analysisState').textContent='Verbunden: Automatischer Vollscan läuft. App offen lassen.';void runScan(true)}else{refreshReport('Verbindung oder Anmeldung fehlgeschlagen')}}}
-function firmwareVersion(p){if(!/^[a-f0-9]{4}$/i.test(p||''))return null;const a=parseInt(p.slice(0,2),16),b=parseInt(p.slice(2),16);return b+'.'+(a>>4)+'.'+(a&15)}
-function serialRegion(p){if(!/^[a-f0-9]{28}$/i.test(p||''))return null;const bytes=p.match(/../g).map(x=>parseInt(x,16)),s=String.fromCharCode(...bytes);return /^1K1[A-Z0-9]{11}$/.test(s)?s[3]:null}
-async function readReg(dst,reg,len,gen,timeout=640){connected(gen);const mark=sequence,when=performance.now();report.requests.push({at:stamp(),dst:formatByte(dst),cmd:'0x01',reg:formatByte(reg),length:len});if(report.requests.length>1300)report.requests.shift();await send(await crypt.frame(dst,1,reg,[len,0]));await poll(()=>frames.some(f=>f.seq>mark&&f.src===dst&&f.dst===0x3e&&f.arg===reg&&f.cmd===4),timeout,gen);const f=frames.find(f=>f.seq>mark&&f.src===dst&&f.dst===0x3e&&f.arg===reg&&f.cmd===4);const obj={at:stamp(),module:formatByte(dst),register:formatByte(reg),length:len,reply:f?{cmd:formatByte(f.cmd),bytes:f.payload.length/2,hex:reg===0x10?'[serial redacted]':f.payload}:null,latencyMs:Math.round(performance.now()-when)};if(f&&reg===0x10){obj.region=serialRegion(f.payload)}if(f&&reg===0x17&&dst===0x16){obj.version=firmwareVersion(f.payload)}report.readings.push(obj);if(report.readings.length>1000)report.readings.shift();return {record:obj,raw:f?.payload||null}}
-async function loadBasic(){const gen=generation;for(const [reg,len] of [[0x10,14],[0x17,2],[0x18,2],[0x46,2],[0x48,2]]){if(!crypt?.O)break;const {record}=await readReg(0x16,reg,len,gen);if(reg===0x10){$('region').textContent=record.region||'unbekannt';report.firmware.region=record.region||null}if(reg===0x17){$('vcuVersion').textContent=record.version||'unbekannt';report.firmware.vcu=record.version||null}}renderStats()}
-const quickRegisters=[0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2a,0x2b,0x2c,0x2d,0x2e,0x2f,0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4a,0x4b,0x4c,0x5a,0x5b,0x5c,0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7a];
-function snapshotValues(){
- const current=new Map();
- for(const r of report.readings){if(r.module==='0x16')current.set(r.register,r.reply?.hex??null)}
- return Object.fromEntries(current);
-}
-function compareSnapshots(){
- const next=snapshotValues();
- if(!snapshotA){snapshotA=next;report.differential=null;$('deltaHint').textContent='Referenz aus dem ersten Scan gespeichert. Jetzt am stehenden Roller den Lichtzustand oder Fahrmodus per Taste ändern und Vorher/Nachher drücken.';return;}
- const changes=[];let compared=0,unread=0;
- for(const [reg,old] of Object.entries(snapshotA)){
-   if(!(reg in next)||old===null||next[reg]===null){unread++;continue;}
-   compared++;if(old!==next[reg]&&reg!=='0x10')changes.push({register:reg,before:old,after:next[reg]});
+const APP_BUILD_UTC='2026-10-09T07:47:25.995Z';
+const $=id=>document.getElementById(id),hex=b=>Array.from(b,v=>v.toString(16).padStart(2,'0')).join(''),stamp=()=>new Date().toISOString();
+const report={firmware:{vcu:'1.5.8',region:'D'},firmwarePackage:null};
+function refreshReport(reason){$('reportOutput').value=JSON.stringify(firmwareCompactObject(),null,2);$('reportState').textContent=reason+' · Analysebericht bereit.'}
+
+// V11: Identify a complete literal-load/store chain for the documented internal flash keys.
+// This is a static firmware signature, not a Bluetooth-OTA authorization mechanism.
+function detectFlashUnlockSequence(plain){
+ const bytes=new Uint8Array(plain),v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+ const h=i=>v.getUint16(i,true),w=i=>v.getUint32(i,true);
+ const literal=(i,opcode)=>(((i+4)&~3)+((opcode&255)*4));
+ const matches=[];
+ for(let i=0x100;i+12<bytes.length;i+=2){
+  const a=h(i),b=h(i+2),c=h(i+4),d=h(i+6),e=h(i+8),f=h(i+10);
+  if((a&0xff00)!==0x4800||(b&0xff00)!==0x4900||c!==0x6041||(d&0xff00)!==0x4900||e!==0x6041||f!==0x4770)continue;
+  const x=literal(i,a),y=literal(i+2,b),z=literal(i+6,d);
+  if(x+4>bytes.length||y+4>bytes.length||z+4>bytes.length)continue;
+  if(w(x)!==0x40022000||w(y)!==0x45670123||w(z)!==0xcdef89ab)continue;
+  matches.push({offset:'0x'+i.toString(16).padStart(6,'0'),pattern:'load controller; load KEY1; store KEY1; load KEY2; store KEY2; return',literalOffsets:[x,y,z].map(n=>'0x'+n.toString(16).padStart(6,'0'))});
  }
- const timeRegs=new Set(['0x64','0x69']);
- const timers=changes.filter(x=>timeRegs.has(x.register));
- const other=changes.filter(x=>!timeRegs.has(x.register));
- report.differential={at:stamp(),compared,unread,changed:changes.length,clockCounterChanges:timers,otherChanges:other,changes:changes.slice(0,60),explanation:'0x64 Runtime und 0x69 RunningTime sind zeitbasierte Zaehler. Nur READ, keine Aussage ueber Schreibberechtigung.'};
- $('deltaHint').textContent=timers.length+' Laufzeitzaehler veraendert · '+other.length+' weitere Register veraendert'+(other.length?': '+other.slice(0,12).map(x=>x.register+' '+x.before+' → '+x.after).join('; '):'. Keine zusaetzliche Zustandsaenderung beobachtet.');
- snapshotA=next;
+ return {count:matches.length,matches:matches.slice(0,8),meaning:'Internal MCU flash-control key sequence; unrelated to Bluetooth write authorization',flashOverBluetoothProven:false};
 }
-async function runScan(full){if(busy||!crypt?.O||!server?.connected)return;busy=true;scanning=true;cancel=false;buttons();const gen=generation,regs=full?Array.from({length:256},(_,i)=>i):quickRegisters;const started=report.readings.length;$('progress').max=regs.length;$('progress').value=0;status((full?'Vollscan':'Schnellscan')+' gestartet – nur READ');try{for(let i=0;i<regs.length;i++){if(cancel)break;const reg=regs[i];const {record}=await readReg(0x16,reg,reg===0x10?14:([0x64,0x69].includes(reg)?4:2),gen,full?420:650);$('progress').value=i+1;$('counter').textContent=(i+1)+'/'+regs.length+' geprüft · '+report.readings.slice(started).filter(r=>r.reply).length+' gültige Antworten · aktuell '+formatByte(reg);if((i+1)%12===0)renderStats();await wait(20)}status(cancel?'Scan gestoppt':'VCU-Registerscan beendet');if(full&&!cancel)compareSnapshots();renderStats();compare();refreshReport(cancel?'Scan vorzeitig beendet':'VCU-Registerscan abgeschlossen')}catch(e){fail(e);refreshReport('Scan mit Fehler unterbrochen')}finally{scanning=false;busy=false;buttons()}}
-function renderStats(){const reads=report.readings,valid=reads.filter(r=>r.reply),vcus=reads.filter(r=>r.module==='0x16'),statuses={};for(const f of report.responses){statuses[f.cmd]=(statuses[f.cmd]||0)+1}const text=Object.entries(statuses).map(([cmd,n])=>cmd+': '+n).join(' · ')||'keine';$('stats').textContent='VCU-Anfragen: '+vcus.length+' · gültige Rückleseantworten: '+valid.length+' · entschlüsselte Befehle: '+text+' · unbekannte/fehlende Antworten werden nicht automatisch als Firmware-Sperre interpretiert.'}
-function extractBaseline(data){if(data?.registerScan?.results)return extractBaseline({results:data.registerScan.results});if(data?.registerHexValues)return Object.entries(data.registerHexValues).map(([reg,payload])=>({key:'0x16|'+reg,payload}));if(data?.readings){return data.readings.map(r=>({key:(r.module||'0x16')+'|'+(r.register||r.reg),payload:r.reply?.hex||null}))}if(data?.results){return data.results.map(r=>({key:formatByte(typeof r.module==='number'?r.module:parseInt(r.module||r.moduleId||'0x16'))+'|'+formatByte(typeof r.register==='number'?r.register:parseInt(r.register||'0')),payload:r.response?.payload||r.payload||null}))}if(data?.reads){return data.reads.map(r=>({key:'0x16|'+formatByte(r.register),payload:r.response?.payload||null}))}return []}
-function compare(){if(!baseline)return;const old=new Map(extractBaseline(baseline).map(r=>[r.key,String(r.payload||'').toLowerCase()]));if(!old.size){$('difference').textContent='JSON erkannt, aber keine vergleichbaren Register gefunden.';return}const current=new Map(report.readings.map(r=>[r.module+'|'+r.register,String(r.reply?.hex||'').toLowerCase()]));let compared=0,differ=0,missing=0;const examples=[];for(const [key,value] of old){if(!current.has(key)){missing++;continue}compared++;if(current.get(key)!==value){differ++;if(examples.length<12)examples.push(key+': '+(value||'(leer)')+' → '+(current.get(key)||'(leer)'))}}report.comparison={compared,differ,missing,examples};$('difference').textContent=compared+' verglichen · '+differ+' unterschiedlich · '+missing+' noch nicht erneut gelesen. '+examples.join(' | ')}
-
-function buildSummary(){
- const mostRecent=new Map();for(const x of report.readings){if(x.module==='0x16')mostRecent.set(x.register,x)}
- const found=[...mostRecent.values()].filter(x=>x.reply), missing=[...mostRecent.values()].filter(x=>!x.reply);
- const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
- const values={};for(const x of found){values[x.register]=x.reply.hex}
- const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v10',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
-}
-function refreshReport(reason){
- const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
- $('analysisState').textContent=(reason||'Zwischenbericht aktualisiert')+' · '+data.registersWithResponse+' Register antworten von '+data.scannedRegisters+' untersuchten · Kopieren bereit.';
- buttons();
-}
-
-async function probeWritePath(){
- if(busy||!server?.connected||!crypt?.O)return;
- if(!confirm('VCU-Schreibpfad testen? Der aktuelle Auto-Abschaltzeit-Wert in Register 0x49 wird identisch zurueckgeschrieben. Kein Firmware-Update. Roller muss stehen. Fortfahren?'))return;
- busy=true;buttons();const gen=generation;
- try{
-  status('VCU-Schreibpfad: Auto-Abschaltwert 0x49 lesen');
-  const original=await readReg(0x16,0x49,2,gen,1200);
-  const value=original.raw?.toLowerCase();
-  if(!/^[a-f0-9]{4}$/.test(value||''))throw Error('0x49 nicht sicher lesbar. Kein WRITE gesendet.');
-  const startSeq=sequence;
-  const payload=Uint8Array.from(value.match(/../g),x=>parseInt(x,16));
-  status('Sende identischen Wert und erfasse WRITE-Antwort');
-  await send(await crypt.frame(0x16,0x02,0x49,payload));
-  await poll(()=>frames.some(f=>f.seq>startSeq&&f.src===0x16&&f.dst===0x3e&&f.arg===0x49&&f.cmd===0x05),2000,gen);
-  const answers=frames.filter(f=>f.seq>startSeq&&f.src===0x16&&f.dst===0x3e).map(f=>({cmd:formatByte(f.cmd),arg:formatByte(f.arg),payload:f.payload}));
-  const ack=answers.filter(f=>f.cmd==='0x05'&&f.arg==='0x49');
-  await wait(170);
-  const after=await readReg(0x16,0x49,2,gen,1000);
-  const final=after.raw?.toLowerCase()||null;
-  const notes=ack.length?'WRITE_RESP 0x05 beobachtet. Flash-Berechtigung NICHT bewiesen.':'Keine WRITE_RESP 0x05 beobachtet. Schreibberechtigung unbekannt.';
-  report.writeProbe={at:stamp(),register:'0x49',description:'VCU AutoOffTime',mode:'WRITE same existing value',before:value,after:final,unchanged:final===value,ackCount:ack.length,answers,notes,flashPermission:'not tested'};
-  $('writeProbeStatus').textContent=notes+' Vorher '+value+'; nachher '+String(final)+'.';
-  status('Schreibpfad-Diagnose abgeschlossen');
-  refreshReport('VCU-Schreibantwort untersucht');
- }catch(e){fail(e);$('writeProbeStatus').textContent='Abgebrochen: '+String(e?.message||e);refreshReport('VCU-Schreibtest unterbrochen')}
- finally{busy=false;buttons()}
-}
-
-
-async function testSettingsWriteAndRestore(){
- if(busy||!server?.connected||!crypt?.O)return;
- if(!confirm('ROLLER MUSS STEHEN. Soll die automatische Abschaltzeit einmalig um 1 Minute veraendert und sofort auf ihren Ausgangswert zurueckgesetzt werden? Kein Firmware-Flash.'))return;
- busy=true;buttons();const gen=generation;
- const trial={schema:'zt3-vcu-0x49-write-restore-v1',at:stamp(),register:'0x49',purpose:'Verify actual setting write and restore',baseline:null,temporary:null,temporaryAck:null,temporaryReadback:null,temporaryConfirmed:false,restoreAck:null,finalReadback:null,restored:false,flashPermission:'not tested',errors:[]};
- report.activeWriteProbe=trial;
- let attempted=false;
- const put49=async(data,stage)=>{
-  connected(gen);
-  const mark=sequence;
-  await send(await crypt.frame(0x16,0x02,0x49,Uint8Array.from(data.match(/../g),x=>parseInt(x,16))));
-  await poll(()=>frames.some(f=>f.seq>mark&&f.src===0x16&&f.dst===0x3e&&f.cmd===0x05&&f.arg===0x49),1800,gen);
-  const ack=frames.find(f=>f.seq>mark&&f.src===0x16&&f.dst===0x3e&&f.cmd===0x05&&f.arg===0x49);
-  return ack?{command:'0x05',register:'0x49',payload:ack.payload}:null;
- };
- try{
-  status('Konfiguration lesen: 0x49');
-  const start=await readReg(0x16,0x49,2,gen,1300);
-  const raw=start.raw?.toLowerCase();
-  if(!/^[a-f0-9]{4}$/.test(raw||''))throw Error('Kein sicherer 2-Byte Ausgangswert. Abbruch ohne WRITE.');
-  const number=parseInt(raw.slice(0,2),16)+(parseInt(raw.slice(2,4),16)<<8);
-  if(number<1||number>59)throw Error('0x49 nicht im erwarteten Bereich 1 bis 59 Minuten. Kein WRITE.');
-  trial.baseline=raw;
-  trial.temporary=(number+1).toString(16).padStart(4,'0').match(/../g).reverse().join('');
-  $('activeProbeStatus').textContent='Original '+raw+' ('+number+' min). Testwert '+trial.temporary+' ('+(number+1)+' min).';
-  try {
-   status('Testwert schreiben; Original wird unmittelbar danach wiederhergestellt');
-   attempted=true;
-   trial.temporaryAck=await put49(trial.temporary,'temporary');
-   await wait(200);
-   const probe=await readReg(0x16,0x49,2,gen,1200);
-   trial.temporaryReadback=probe.raw?.toLowerCase()||null;
-   trial.temporaryConfirmed=trial.temporaryReadback===trial.temporary;
-  }catch(e){trial.errors.push('Temporaerer Versuch: '+String(e.message||e))}
-  finally{
-   if(attempted){
-    try{
-     status('Originalwert zurueckschreiben: 0x49');
-     trial.restoreAck=await put49(trial.baseline,'restore');
-     await wait(180);
-     const restored=await readReg(0x16,0x49,2,gen,1300);
-     trial.finalReadback=restored.raw?.toLowerCase()||null;
-     trial.restored=trial.finalReadback===trial.baseline;
-    }catch(e){trial.errors.push('Wiederherstellung: '+String(e.message||e))}
-   }
-  }
-  let message;
-  if(!trial.restored){
-   message='ACHTUNG: Rueckstellung des Originalwerts NICHT bestaetigt! Aktuell '+String(trial.finalReadback)+', original '+trial.baseline+'. Bitte Einstellung in der offiziellen App kontrollieren.';
-  }else if(trial.temporaryConfirmed){
-   message='Einstellungs-Schreibzugriff NACHGEWIESEN: Testwert zurueckgelesen, Originalwert wiederhergestellt. Firmware-Flash-Berechtigung weiterhin unbekannt.';
-  }else{
-   message='Originalwert wiederhergestellt. Veraenderter Testwert NICHT bestaetigt; echter Schreibzugriff nicht nachgewiesen.';
-  }
-  trial.result=message;
-  $('activeProbeStatus').textContent=message;
-  status('0x49 Schreibtest beendet');
-  refreshReport('0x49 Schreibtest mit Rueckstellung dokumentiert');
- }catch(e){
-  trial.errors.push(String(e.message||e));
-  $('activeProbeStatus').textContent='Test abgebrochen: '+String(e.message||e)+(attempted&&!trial.restored?' Original nicht bestaetigt!':'');
-  fail(e);refreshReport('Schreibtest unterbrochen');
- }finally{busy=false;buttons()}
-}
-
-
-
-// Offline-only test of the publicly documented Ninebot TEA/XTEA standard key.
-// Independent of Bluetooth pairing; do not mistake a checksum for hardware compatibility.
-
 function hexWord32(num){return '0x'+num.toString(16).padStart(8,'0')}
 
 
@@ -370,7 +212,7 @@ function offlineArmFirmwareInfo(plain){
  const terms=/firmware|bootloader|boot|update|flash|auth|unlock|sign|hash|encrypt|decrypt|tea|aes|checksum|crc|iap|vcu|segway|ninebot|zt3|at32|error|version|uart|swd|dfu/i;
  const important=allStrings.filter(x=>terms.test(x.text));
  return {
-  schema:'zt3-arm-cortexm-static-v3',
+  schema:'zt3-arm-cortexm-static-v4',
   flashBase:hexWord32(flashBase),assumedFlashImageEnd:hexWord32(flashEnd),
   imageBytes:b.length,
   initialStackPointer:hexWord32(sp),stackPointerInPlausibleSram:stackInRam,
@@ -379,6 +221,7 @@ function offlineArmFirmwareInfo(plain){
   plausibleExceptionAndIrqHandlers:plausibleHandlers,
   thumbMemoryReferenceAnalysis:inspectThumbLiteralMemoryReferences(plain),
   flashControllerFingerprint:inspectArteryFlashCodeFingerprint(plain),
+  internalFlashKeyRoutine:detectFlashUnlockSequence(plain),
   vectors:entries,
   printableStringsFound:allStrings.length,
   firmwareRelevantStrings:important.slice(0,40),
@@ -387,18 +230,30 @@ function offlineArmFirmwareInfo(plain){
  };
 }
 function firmwareCompactObject(){
- const p=report.firmwarePackage||{};
+ const p=report.firmwarePackage||{},st=p.staticBinary||{},fp=st.flashControllerFingerprint||{},sig=fp.signatures||[];
+ const points=name=>{const hit=sig.find(x=>x.name===name);return hit?{count:hit.occurrences,offsets:hit.offsets}:null};
  return {
-  schema:'zt3-vcu-firmware-only-v10',createdAt:stamp(),
-  scooter:{model:'ZT3 Pro',installedVcu:report.firmware.vcu||'not read this session',region:report.firmware.region||'not read'},
-  package:{source:p.source,zipSha256:p.zipSha256,firmwareSha256:p.firmwareSha256,firmwareBytes:p.entries?.find(x=>x.name==='FIRM.bin.enc')?.bytes,manifest:p.manifest,decryptedWithPublicStandardKey:p.decryptedWithPublicStandardKey,decryptedVariant:p.decryptedVariant,standardKeyTests:p.standardKeyTests,staticBinary:p.staticBinary,compatibilityConfirmed:false,firmwareFlashPermissionTested:false},
-  conclusion:'Offline analysis only. No firmware flash and no proof of firmware-level write permission.'
+  schema:'zt3-vcu-firmware-only-v11',
+  build:{version:'V11',publishedAt:APP_BUILD_UTC},
+  generatedAt:stamp(),
+  device:{model:'ZT3 Pro',lastKnownVCU:'1.5.8',lastKnownRegion:'D'},
+  firmware:{
+   zipHash:p.zipSha256||null,source:p.source||null,
+   target:p.manifest?.firmware?.compatible||[],
+   decryptedWithPublicTEA:!!p.decryptedWithPublicStandardKey,
+   decryptedHash:p.standardKeyTests?.find(x=>x.publicStandardKeyChecksumValid)?.plainSha256||null,
+   armFirmwareDetected:!!st.likelyCortexMFirmware,
+   flashPeripheral:points('FLASH_CTRL_BASE'),hardwareKey1:points('FLASH_KEY1'),hardwareKey2:points('FLASH_KEY2'),
+   flashKeyRoutine:st.internalFlashKeyRoutine||null,
+   deviceFlashWriteAccess:'NOT TESTED',firmwareCompatibility:'NOT VERIFIED'
+  },
+  conclusion:'Offline inspection confirms internal flash programming code in a public firmware image, but no Bluetooth OTA unlock.'
  };
 }
 async function copyFirmwareCompact(){
  const message=JSON.stringify(firmwareCompactObject(),null,2);
  try{await navigator.clipboard.writeText(message);$('fwStaticStatus').textContent+=' · Firmware-Bericht kopiert.'}
- catch(e){const box=$('reportOutput');box.value=message;box.focus();box.select();$('fwStaticStatus').textContent+=' · Bericht ins Textfeld eingesetzt und markiert. Bitte manuell kopieren.'}
+ catch(e){const box=$('reportOutput');box.value=message;box.focus();box.select();$('fwStaticStatus').textContent='Kopieren blockiert: Bericht unten markieren und kopieren.'}
 }
 $('fwCopyAnalysis').addEventListener('click',()=>void copyFirmwareCompact());
 
@@ -572,6 +427,8 @@ async function analyzeFwFile(file,source){
    }catch(e){result.binaryInspectionError=String(e?.message||e)}
   }
   report.firmwarePackage=result;
+  const routine=result.staticBinary?.internalFlashKeyRoutine;
+  $('flashStatus').textContent=routine?.count?'Interne Flash-Schlüsselroutine erkannt bei '+routine.matches.map(x=>x.offset).join(', ')+'. Kein Bluetooth-Unlock nachgewiesen.':'Keine eindeutige Schlüsselsequenz gefunden; Bluetooth-Flashzugriff weiterhin unbekannt.';
   const manifestNote=result.manifestError?'Manifest nicht lesbar: '+result.manifestError:'Manifest gelesen';
   statusEl.textContent='ZIP: '+zip.entries.length+' Dateien. '+(result.encryptedFirmwarePresent?'Verschluesseltes Firmware-Abbild erkannt. ':'')+manifestNote+'. Vollstaendige Daten im kopierbaren Bericht. Keine VCU-Aenderung.';
   refreshReport('Firmware-ZIP offline analysiert');
@@ -594,12 +451,5 @@ async function fetchFirmwareZip(){
 $('fwAnalyze').addEventListener('click',()=>void fetchFirmwareZip());
 $('fwZip').addEventListener('change',()=>{const f=$('fwZip').files?.[0];if(f)void analyzeFwFile(f,'local upload')});
 
-async function copyReport(){
- const content=$('reportOutput').value;if(!content)return;
- try{await navigator.clipboard.writeText(content);$('analysisState').textContent='Bericht kopiert! Jetzt hier in ChatGPT einfügen.'}
- catch(_){const area=$('reportOutput');area.focus();area.select();$('analysisState').textContent='Automatisches Kopieren nicht erlaubt: Bericht ist markiert. Bitte Kopieren auswählen.'}
-}
 
-function saveJson(){const data={...report,exportedAt:stamp(),safety:'READ only. No flash, no unlock, no credentials included.'},blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='ZT3-VCU-Trace-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)}
-$('copyReport').addEventListener('click',()=>void copyReport());$('connect').addEventListener('click',()=>void connectScooter());$('disconnect').addEventListener('click',()=>{cancel=true;if(device?.gatt?.connected)device.gatt.disconnect()});$('quick').addEventListener('click',()=>void runScan(false));$('full').addEventListener('click',()=>void runScan(true));$('delta').addEventListener('click',()=>void runScan(true));$('writeProbe').addEventListener('click',()=>void probeWritePath());$('activeProbe').addEventListener('click',()=>void testSettingsWriteAndRestore());$('stop').addEventListener('click',()=>{cancel=true;$('counter').textContent+=' · Stop angefordert'});$('export').addEventListener('click',saveJson);$('clear').addEventListener('click',()=>{report.requests=[];report.responses=[];report.readings=[];report.events=[];report.errors=[];$('reportOutput').value='';snapshotA=null;report.differential=null;report.writeProbe=null;report.activeWriteProbe=null;report.firmwarePackage=null;offlinePlainFirmware=null;$('fwPlainSave').disabled=true;$('deltaHint').textContent='Referenz gelöscht; beim nächsten Vollscan wird eine neue erstellt.';$('analysisState').textContent='Aufzeichnung geleert.';log('Aufzeichnung geleert');renderStats();buttons()});$('baseline').addEventListener('change',async()=>{const f=$('baseline').files?.[0];if(!f)return;try{baseline=JSON.parse(await f.text());compare()}catch(e){$('difference').textContent='JSON ungültig: '+String(e.message||e)}});log('VCU-Trace bereit. WebBluetooth='+!!navigator.bluetooth);buttons();
 </script></body></html>
