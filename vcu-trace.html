@@ -115,7 +115,7 @@ function buildSummary(){
  const replies={};for(const v of report.responses){replies[v.cmd]=(replies[v.cmd]||0)+1}
  const values={};for(const x of found){values[x.register]=x.reply.hex}
  const unusual=report.responses.filter(x=>x.cmd!=='0x04').slice(-20).map(x=>({cmd:x.cmd,arg:x.arg,payload:x.payload}));
- return {schema:'zt3-vcu-auto-analysis-v8',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
+ return {schema:'zt3-vcu-auto-analysis-v9',generatedAt:stamp(),deviceModel:'Segway ZT3 Pro',vcuFirmware:report.firmware.vcu||'unknown',regionCode:report.firmware.region||'unknown',bleAuthenticated:!!report.auth.O,transport:report.transport||null,scannedRegisters:mostRecent.size,registersWithResponse:found.length,registersWithoutResponse:missing.length,missingRegisters:missing.map(x=>x.register),registerHexValues:values,receivedCommands:replies,unexpectedResponses:unusual,errors:report.errors.slice(-12),comparison:report.comparison||null,differential:report.differential||null,writeProbe:report.writeProbe||null,activeWriteProbe:report.activeWriteProbe||null,firmwarePackage:report.firmwarePackage||null,assessment:{readAccess:found.length>0?'some read responses received':'not confirmed',firmwareWritePermission:'not tested; unknown',notes:'Register scans are READ only. Optional 0x49 WRITE probes are recorded separately. No IAP, flash or firmware unlock attempted.'}};
 }
 function refreshReport(reason){
  const data=buildSummary();$('reportOutput').value=JSON.stringify(data,null,2);
@@ -223,6 +223,71 @@ async function testSettingsWriteAndRestore(){
 // Independent of Bluetooth pairing; do not mistake a checksum for hardware compatibility.
 
 function hexWord32(num){return '0x'+num.toString(16).padStart(8,'0')}
+
+function inspectThumbLiteralMemoryReferences(plain){
+ const bytes=new Uint8Array(plain),dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+ const base=0x08000000;
+ const candidateReferences=[];
+ const region=(n)=>{
+   if(n>=0x40022000&&n<0x40022100)return 'candidate_flash_controller_0x40022000';
+   if(n>=0x40023c00&&n<0x40023d00)return 'candidate_flash_controller_0x40023c00';
+   if(n>=0x08000000&&n<0x08100000)return 'internal_flash_address';
+   if(n>=0x20000000&&n<0x20100000)return 'sram_address';
+   if(n>=0x1fffb000&&n<0x20000000)return 'rom_or_system_memory';
+   if(n>=0x40000000&&n<0x60000000)return 'peripheral_address';
+   if(n>=0xe0000000&&n<0xe0100000)return 'cortex_m_system_address';
+   return null;
+ };
+ const instructionSites=[];
+ // Thumb-1 LDR (literal): 01001 Rt imm8, targets PC-aligned literals.
+ // A two-byte match alone does not establish that these bytes are executable code.
+ for(let i=0x100;i+1<bytes.length;i+=2){
+   const hw=dv.getUint16(i,true);
+   if((hw&0xf800)!==0x4800)continue;
+   const literalAddress=(((base+i+4)&~3)+((hw&0xff)<<2))>>>0;
+   const literalOffset=literalAddress-base;
+   if(literalOffset<0||literalOffset+4>bytes.length)continue;
+   const value=dv.getUint32(literalOffset,true);
+   const classification=region(value);
+   if(!classification)continue;
+   instructionSites.push({instructionOffset:hexWord32(i),literalOffset:hexWord32(literalOffset),literalValue:hexWord32(value),region:classification});
+ }
+ const groups=new Map();
+ for(const r of instructionSites){
+   const key=r.literalValue;
+   const group=groups.get(key)||{address:key,region:r.region,references:0,sampleInstructionOffsets:[]};
+   group.references++;
+   if(group.sampleInstructionOffsets.length<5)group.sampleInstructionOffsets.push(r.instructionOffset);
+   groups.set(key,group);
+ }
+ const sorted=[...groups.values()].sort((a,b)=>b.references-a.references);
+ const flashRegions=['candidate_flash_controller_0x40022000','candidate_flash_controller_0x40023c00'];
+ const flashControllerCandidates=sorted.filter(r=>flashRegions.includes(r.region));
+ const allFlashConstants=[];
+ for(let i=0;i+4<=bytes.length;i+=4){
+   const n=dv.getUint32(i,true);
+   if((n>=0x40022000&&n<0x40022100)||(n>=0x40023c00&&n<0x40023d00)){
+      if(allFlashConstants.length<100)allFlashConstants.push({imageOffset:hexWord32(i),address:hexWord32(n)});
+   }
+ }
+ const byRegion={};
+ for(const r of instructionSites)byRegion[r.region]=(byRegion[r.region]||0)+1;
+ return {
+  schema:'zt3-thumb-memory-reference-pass-v1',
+  instructionsInterpreted:'Thumb-1 16-bit PC-relative LDR literal; heuristic static scan, not complete disassembly',
+  candidateInstructionsReferencingKnownMemoryRegions:instructionSites.length,
+  referenceClasses:byRegion,
+  topPeripheralReferences:sorted.filter(r=>r.region==='peripheral_address').slice(0,18),
+  possibleFlashControllerReferences:flashControllerCandidates.slice(0,30),
+  possibleFlashAddressConstants:allFlashConstants,
+  topInternalFlashPointers:sorted.filter(r=>r.region==='internal_flash_address').slice(0,12),
+  possibleRomReferences:sorted.filter(r=>r.region==='rom_or_system_memory').slice(0,10),
+  flashControllerMappingsTentative:['0x40022000 (some AT32/STM32 families)','0x40023c00 (other AT32 families)'],
+  findingsLimitedByChipModel:'VCU AT32 variant not verified. No matches do not prove absence of flashing logic, which could reside in bootloader or use indirect register addresses.',
+  confidence:'low-to-moderate: single-instruction pattern search may interpret constants/data as instructions; not a disassembler and not an unlock test'
+ };
+}
+
 function offlineArmFirmwareInfo(plain){
  const b=new Uint8Array(plain),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
  if(b.length<0x100)throw Error('Zu wenig Daten fuer eine ARM-Vektortabelle');
@@ -254,13 +319,14 @@ function offlineArmFirmwareInfo(plain){
  const terms=/firmware|bootloader|boot|update|flash|auth|unlock|sign|hash|encrypt|decrypt|tea|aes|checksum|crc|iap|vcu|segway|ninebot|zt3|at32|error|version|uart|swd|dfu/i;
  const important=allStrings.filter(x=>terms.test(x.text));
  return {
-  schema:'zt3-arm-cortexm-static-v1',
+  schema:'zt3-arm-cortexm-static-v2',
   flashBase:hexWord32(flashBase),assumedFlashImageEnd:hexWord32(flashEnd),
   imageBytes:b.length,
   initialStackPointer:hexWord32(sp),stackPointerInPlausibleSram:stackInRam,
   resetHandler:hexWord32(reset),resetHasThumbBit:resetThumb,resetPointsInsideImage:resetInImage,
   likelyCortexMFirmware:stackInRam&&resetThumb&&resetInImage&&plausibleHandlers>=3,
   plausibleExceptionAndIrqHandlers:plausibleHandlers,
+  thumbMemoryReferenceAnalysis:inspectThumbLiteralMemoryReferences(plain),
   vectors:entries,
   printableStringsFound:allStrings.length,
   firmwareRelevantStrings:important.slice(0,40),
@@ -271,7 +337,7 @@ function offlineArmFirmwareInfo(plain){
 function firmwareCompactObject(){
  const p=report.firmwarePackage||{};
  return {
-  schema:'zt3-vcu-firmware-only-v8',createdAt:stamp(),
+  schema:'zt3-vcu-firmware-only-v9',createdAt:stamp(),
   scooter:{model:'ZT3 Pro',installedVcu:report.firmware.vcu||'not read this session',region:report.firmware.region||'not read'},
   package:{source:p.source,zipSha256:p.zipSha256,firmwareSha256:p.firmwareSha256,firmwareBytes:p.entries?.find(x=>x.name==='FIRM.bin.enc')?.bytes,manifest:p.manifest,decryptedWithPublicStandardKey:p.decryptedWithPublicStandardKey,decryptedVariant:p.decryptedVariant,standardKeyTests:p.standardKeyTests,staticBinary:p.staticBinary,compatibilityConfirmed:false,firmwareFlashPermissionTested:false},
   conclusion:'Offline analysis only. No firmware flash and no proof of firmware-level write permission.'
@@ -446,7 +512,7 @@ async function analyzeFwFile(file,source){
     }
     result.standardKeyTests=checks;
     result.decryptedWithPublicStandardKey=!!result.decryptedWithPublicStandardKey;
-    $('fwStaticStatus').textContent=result.staticBinary?(result.staticBinary.likelyCortexMFirmware?'ARM-Cortex-M-Vektortabelle plausibel. ':'Vektortabelle nicht ausreichend plausibel. ')+'Reset '+result.staticBinary.resetHandler+'; '+result.staticBinary.plausibleExceptionAndIrqHandlers+' plausible Handler; '+result.staticBinary.firmwareRelevantStrings.length+' relevante Zeichenketten.':'Keine gueltige Entschluesselung mit den oeffentlichen Standardschluesseln.';
+    $('fwStaticStatus').textContent=result.staticBinary?(result.staticBinary.likelyCortexMFirmware?'ARM-Cortex-M-Vektortabelle plausibel. ':'Vektortabelle nicht ausreichend plausibel. ')+'Reset '+result.staticBinary.resetHandler+'; '+result.staticBinary.plausibleExceptionAndIrqHandlers+' Handler; '+result.staticBinary.thumbMemoryReferenceAnalysis.possibleFlashControllerReferences.length+' hypothetische Flash-Controller-Referenzen. Details im kompakten Bericht.':'Keine gueltige Entschluesselung mit den oeffentlichen Standardschluesseln.';
     $('fwCopyAnalysis').disabled=false;
     $('fwDecryptStatus').textContent=result.decryptedWithPublicStandardKey?
        'Standard-Key '+result.decryptedVariant.toUpperCase()+' besteht die Firmware-Pruefsumme. Entschluesseltes Abbild offline verfuegbar; Eignung fuer deinen Roller NICHT bewiesen.':
